@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.ylw.jdbmcp.DebugSessionIT
+-------------------------------------------------------------------------------
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 8.837 s -- in com.ylw.jdbmcp.DebugSessionIT

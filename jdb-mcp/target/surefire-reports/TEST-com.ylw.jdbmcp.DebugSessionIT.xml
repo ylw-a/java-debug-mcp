@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd" version="3.0" name="com.ylw.jdbmcp.DebugSessionIT" time="8.837" tests="3" errors="0" skipped="0" failures="0">
+  <properties>
+    <property name="java.specification.version" value="17"/>
+    <property name="sun.cpu.isalist" value="amd64"/>
+    <property name="sun.jnu.encoding" value="GBK"/>
+    <property name="java.class.path" value="F:\project\java-debug\jdb-mcp\target\test-classes;F:\project\java-debug\jdb-mcp\target\classes;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\io\modelcontextprotocol\sdk\mcp\0.9.0\mcp-0.9.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\slf4j\slf4j-api\2.0.16\slf4j-api-2.0.16.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\com\fasterxml\jackson\core\jackson-databind\2.17.0\jackson-databind-2.17.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\com\fasterxml\jackson\core\jackson-annotations\2.17.0\jackson-annotations-2.17.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\com\fasterxml\jackson\core\jackson-core\2.17.0\jackson-core-2.17.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\net\bytebuddy\byte-buddy\1.14.9\byte-buddy-1.14.9.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\io\projectreactor\reactor-core\3.7.0\reactor-core-3.7.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\reactivestreams\reactive-streams\1.0.4\reactive-streams-1.0.4.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\slf4j\slf4j-simple\2.0.16\slf4j-simple-2.0.16.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
+    <property name="java.vm.vendor" value="Oracle Corporation"/>
+    <property name="sun.arch.data.model" value="64"/>
+    <property name="user.variant" value=""/>
+    <property name="java.vendor.url" value="https://java.oracle.com/"/>
+    <property name="user.timezone" value="Asia/Shanghai"/>
+    <property name="os.name" value="Windows 10"/>
+    <property name="java.vm.specification.version" value="17"/>
+    <property name="sun.java.launcher" value="SUN_STANDARD"/>
+    <property name="user.country" value="CN"/>
+    <property name="sun.boot.library.path" value="F:\environment\jdk-17.0.0.1\bin"/>
+    <property name="sun.java.command" value="C:\Users\admin\AppData\Local\Temp\surefire1631169785180180837\surefirebooter-20260706012226933_3.jar C:\Users\admin\AppData\Local\Temp\surefire1631169785180180837 2026-07-06T01-22-26_682-jvmRun1 surefire-20260706012226933_1tmp surefire_0-20260706012226933_2tmp"/>
+    <property name="jdk.debug" value="release"/>
+    <property name="surefire.test.class.path" value="F:\project\java-debug\jdb-mcp\target\test-classes;F:\project\java-debug\jdb-mcp\target\classes;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\io\modelcontextprotocol\sdk\mcp\0.9.0\mcp-0.9.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\slf4j\slf4j-api\2.0.16\slf4j-api-2.0.16.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\com\fasterxml\jackson\core\jackson-databind\2.17.0\jackson-databind-2.17.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\com\fasterxml\jackson\core\jackson-annotations\2.17.0\jackson-annotations-2.17.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\com\fasterxml\jackson\core\jackson-core\2.17.0\jackson-core-2.17.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\net\bytebuddy\byte-buddy\1.14.9\byte-buddy-1.14.9.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\io\projectreactor\reactor-core\3.7.0\reactor-core-3.7.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\reactivestreams\reactive-streams\1.0.4\reactive-streams-1.0.4.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\slf4j\slf4j-simple\2.0.16\slf4j-simple-2.0.16.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
+    <property name="sun.cpu.endian" value="little"/>
+    <property name="user.home" value="C:\Users\admin"/>
+    <property name="user.language" value="zh"/>
+    <property name="java.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.version.date" value="2024-07-02"/>
+    <property name="java.home" value="F:\environment\jdk-17.0.0.1"/>
+    <property name="file.separator" value="\"/>
+    <property name="basedir" value="F:\project\java-debug\jdb-mcp"/>
+    <property name="java.vm.compressedOopsMode" value="Zero based"/>
+    <property name="line.separator" value="&#10;"/>
+    <property name="java.vm.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.specification.name" value="Java Platform API Specification"/>
+    <property name="surefire.real.class.path" value="C:\Users\admin\AppData\Local\Temp\surefire1631169785180180837\surefirebooter-20260706012226933_3.jar"/>
+    <property name="user.script" value=""/>
+    <property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/>
+    <property name="java.runtime.version" value="17.0.0.1+2-3"/>
+    <property name="user.name" value="admin"/>
+    <property name="path.separator" value=";"/>
+    <property name="os.version" value="10.0"/>
+    <property name="java.runtime.name" value="OpenJDK Runtime Environment"/>
+    <property name="file.encoding" value="GBK"/>
+    <property name="java.vm.name" value="OpenJDK 64-Bit Server VM"/>
+    <property name="localRepository" value="F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\maven-repo"/>
+    <property name="java.vendor.url.bug" value="https://bugreport.java.com/bugreport/"/>
+    <property name="java.io.tmpdir" value="C:\Users\admin\AppData\Local\Temp\"/>
+    <property name="java.version" value="17.0.0.1"/>
+    <property name="user.dir" value="F:\project\java-debug\jdb-mcp"/>
+    <property name="os.arch" value="amd64"/>
+    <property name="java.vm.specification.name" value="Java Virtual Machine Specification"/>
+    <property name="sun.os.patch.level" value=""/>
+    <property name="native.encoding" value="GBK"/>
+    <property name="java.library.path" value="F:\environment\jdk-17.0.0.1\bin;C:\WINDOWS\Sun\Java\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\Users\admin\bin;E:\Git\Git\mingw64\bin;E:\Git\Git\usr\local\bin;E:\Git\Git\usr\bin;E:\Git\Git\usr\bin;E:\Git\Git\mingw64\bin;E:\Git\Git\usr\bin;C:\Users\admin\bin;C:\Program Files (x86)\Common Files\Oracle\Java\javapath;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\environment\jdk1.8\bin;D:\environment\jdk1.8\jre\bin;F:\maven\apache-maven-3.6.3-bin\apache-maven-3.6.3\bin;D:\environment\mysql-5.7.32-winx64\mysql-5.7.32-winx64\bin;D:\environment\SVN\bin;D:\environment\Xshell;D:\environment\Xftp;D:\environment\gradle-8.8-rc-1\bin;E:\Git\Git\cmd;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;D:\HashiCorp\Vagrant\bin;D:\Program Files\TortoiseGit\bin;D:\Program Files (x86)\Tencent\微信web开发者工具\dll;D:\environment\node;C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR;D:\Program Files\MongoDB\Server\8.0\bin;D:\python\Python313\Scripts;D:\python\Python313;C:\Users\admin\AppData\Local\Microsoft\WindowsApps;F:\VS code\Microsoft VS Code\bin;C:\Users\admin\AppData\Roaming\npm;D:\Program Files\JetBrains\IntelliJ IDEA 2024.2.3\bin;D:\ollama\Ollama;D:\environment\AIoT IDE\bin;C:\Users\admin\AppData\Local\Microsoft\WindowsApps;C:\Users\admin\AppData\Local\Programs\Ollama;E:\Git\Git\usr\bin\vendor_perl;E:\Git\Git\usr\bin\core_perl;."/>
+    <property name="java.vm.info" value="mixed mode, sharing"/>
+    <property name="java.vendor" value="Oracle Corporation"/>
+    <property name="java.vm.version" value="17.0.0.1+2-3"/>
+    <property name="java.specification.maintenance.version" value="1"/>
+    <property name="sun.io.unicode.encoding" value="UnicodeLittle"/>
+    <property name="java.class.version" value="61.0"/>
+  </properties>
+  <testcase name="modeA_capturesNullBreakAndCollectionTruncation" classname="com.ylw.jdbmcp.DebugSessionIT" time="8.15">
+    <system-out><![CDATA[[test] started: {status=attached, mode=launch, pid=23504, loadedClasses=420, description=target launched and suspended; set breakpoints then they fire on resume}
+[test] breakpoint armed: {mode=A, breakpointId=bp-1, resolvedClass=UserService, method=processUser, captures=[args[0].name, args[0].address.id, args[0].getAddress().getId(), args[1].items[0].sku, args[1].items, this.serviceName, this.callCount], hitCount=0, status=armed_deferred, note=class not loaded yet; armed via a class-prepare watcher and will fire once the class loads. Non-blocking - poll list_hits.}
+[test] got 3 hits
+[capture] args[0].name -> ok :: string=user-1
+[capture] args[0].address.id -> null_break at address
+[capture] args[0].getAddress().getId() -> null_break at getAddress()
+[capture] args[1].items[0].sku -> ok :: string=SKU-0
+[capture] args[1].items -> ok :: array=null
+[capture] this.serviceName -> ok :: string=userService
+[capture] this.callCount -> ok :: primitive=1
+[test] mode A assertions passed
+]]></system-out>
+    <system-err><![CDATA[[target.out] Listening for transport dt_socket at address: 60817
+[jdi] materialized deferred breakpoint bp-1 on com.ylw.demo.UserService
+[target.out] [demo] processUser name=user-1 items=25
+[target.out] [demo] processUser name=user-2 items=25
+[target.out] [demo] processUser name=user-3 items=25
+]]></system-err>
+  </testcase>
+  <testcase name="listClasses_resolvesUserService" classname="com.ylw.jdbmcp.DebugSessionIT" time="0.419">
+    <system-out><![CDATA[[test] list_classes OK: [com.ylw.demo.UserService{proxy=false, interface=false, prepared=true}]
+]]></system-out>
+    <system-err><![CDATA[[target.out] Listening for transport dt_socket at address: 60827
+[jdi] materialized deferred breakpoint bp-1 on com.ylw.demo.UserService
+[target.out] [demo] processUser name=user-1 items=25
+]]></system-err>
+  </testcase>
+  <testcase name="modeB_blocksReturnsHitAndExploreResume" classname="com.ylw.jdbmcp.DebugSessionIT" time="0.243">
+    <system-out><![CDATA[[test] explore result: {status=ok, result=com.ylw.jdbmcp.snapshot.CaptureResult@3c0be339, exploreBudgetRemaining=4}
+[test] mode B + explore + resume passed
+]]></system-out>
+    <system-err><![CDATA[[target.out] Listening for transport dt_socket at address: 60829
+[jdi] materialized deferred breakpoint bp-1 on com.ylw.demo.UserService
+]]></system-err>
+  </testcase>
+</testsuite>

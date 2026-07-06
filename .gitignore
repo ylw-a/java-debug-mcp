@@ -1,3 +1,7 @@
 .idea/
 .claude/
 docs/
+target/
+*.class
+*.jar
+!src/**

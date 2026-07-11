@@ -44,13 +44,20 @@ public final class ExprCapture {
         public final int toStringLimit;
         public final int collectionLimit;
         public final int maxFields;
+        public final boolean safeMode;    // no method invocation (getters, toString, List size/get)
 
         public Limits(int pathDepth, int renderDepth, int toStringLimit, int collectionLimit, int maxFields) {
+            this(pathDepth, renderDepth, toStringLimit, collectionLimit, maxFields, false);
+        }
+
+        public Limits(int pathDepth, int renderDepth, int toStringLimit, int collectionLimit,
+                      int maxFields, boolean safeMode) {
             this.pathDepth = pathDepth;
             this.renderDepth = renderDepth;
             this.toStringLimit = toStringLimit;
             this.collectionLimit = collectionLimit;
             this.maxFields = maxFields;
+            this.safeMode = safeMode;
         }
     }
 
@@ -170,7 +177,10 @@ public final class ExprCapture {
     }
 
     // ---------------------------------------------------------------- resolve (reusable)
-    public static Resolution resolveValue(ThreadReference thread, StackFrame frame, String expr, Limits limits) {
+
+    /** Resolve with optional exception root ({@code e} in exception bp captures). */
+    public static Resolution resolveValue(ThreadReference thread, StackFrame frame, String expr,
+                                          Limits limits, Value eRoot) {
         List<Segment> segs;
         try {
             segs = parse(expr);
@@ -185,7 +195,7 @@ public final class ExprCapture {
 
         Value cur;
         try {
-            cur = resolveRoot(frame, segs.get(0));
+            cur = resolveRoot(frame, segs.get(0), eRoot);
         } catch (NotFound nf) {
             return Resolution.notFound(nf.getMessage());
         } catch (Exception e) {
@@ -200,7 +210,7 @@ public final class ExprCapture {
             Segment seg = segs.get(i);
             boolean isLast = (i == segs.size() - 1);
             try {
-                cur = dereference(thread, cur, seg);
+                cur = dereference(thread, cur, seg, limits);
             } catch (NotFound nf) {
                 return Resolution.notFound(nf.getMessage());
             } catch (Exception e) {
@@ -214,11 +224,49 @@ public final class ExprCapture {
         return Resolution.ok(cur);
     }
 
+    public static Resolution resolveValue(ThreadReference thread, StackFrame frame, String expr, Limits limits) {
+        return resolveValue(thread, frame, expr, limits, null);
+    }
+
+    private static Value resolveRoot(StackFrame frame, Segment root, Value eRoot) throws Exception {
+        if (root instanceof RootThis) {
+            return frame.thisObject();
+        }
+        if (root instanceof RootArg ra) {
+            List<Value> args = frame.getArgumentValues();
+            if (ra.index() < 0 || ra.index() >= args.size()) {
+                throw new NotFound("args[" + ra.index() + "] out of range (arity=" + args.size() + ")");
+            }
+            return args.get(ra.index());
+        }
+        if (root instanceof RootVar rv) {
+            // In exception-bp captures, 'e' resolves to the thrown exception
+            if ("e".equals(rv.name()) && eRoot != null) {
+                return eRoot;
+            }
+            LocalVariable lv = frame.visibleVariableByName(rv.name());
+            if (lv == null) throw new NotFound("no local variable named '" + rv.name() + "'");
+            return frame.getValue(lv);
+        }
+        throw new IllegalArgumentException("unsupported root segment");
+    }
+
     // ---------------------------------------------------------------- evaluate (resolve + render)
+
+    /** Full evaluate supporting an optional exception root ({@code e} in exception bps). */
+    public static CaptureResult evaluate(
+            ThreadReference thread, StackFrame frame, String expr, Limits limits, Value eRoot) {
+        Resolution r = resolveValue(thread, frame, expr, limits, eRoot);
+        return buildResult(thread, expr, r, limits);
+    }
+
     public static CaptureResult evaluate(
             ThreadReference thread, StackFrame frame, String expr, Limits limits) {
+        Resolution r = resolveValue(thread, frame, expr, limits, null);
+        return buildResult(thread, expr, r, limits);
+    }
 
-        Resolution r = resolveValue(thread, frame, expr, limits);
+    private static CaptureResult buildResult(ThreadReference thread, String expr, Resolution r, Limits limits) {
         return switch (r.status) {
             case "ok" -> {
                 if (r.value == null) {
@@ -239,26 +287,7 @@ public final class ExprCapture {
         };
     }
 
-    private static Value resolveRoot(StackFrame frame, Segment root) throws Exception {
-        if (root instanceof RootThis) {
-            return frame.thisObject();
-        }
-        if (root instanceof RootArg ra) {
-            List<Value> args = frame.getArgumentValues();
-            if (ra.index() < 0 || ra.index() >= args.size()) {
-                throw new NotFound("args[" + ra.index() + "] out of range (arity=" + args.size() + ")");
-            }
-            return args.get(ra.index());
-        }
-        if (root instanceof RootVar rv) {
-            LocalVariable lv = frame.visibleVariableByName(rv.name());
-            if (lv == null) throw new NotFound("no local variable named '" + rv.name() + "'");
-            return frame.getValue(lv);
-        }
-        throw new IllegalArgumentException("unsupported root segment");
-    }
-
-    private static Value dereference(ThreadReference thread, Value cur, Segment seg) throws Exception {
+    private static Value dereference(ThreadReference thread, Value cur, Segment seg, Limits limits) throws Exception {
         if (seg instanceof FieldSeg fs) {
             if (!(cur instanceof ObjectReference obj)) {
                 throw new NotFound("cannot read field '" + fs.name() + "' on non-object (" + typeLabel(cur) + ")");
@@ -273,6 +302,9 @@ public final class ExprCapture {
             return obj.getValue(f);
         }
         if (seg instanceof GetterSeg gs) {
+            if (limits.safeMode) {
+                throw new NotFound("safe_mode: getter " + gs.name() + "() disabled; read the field directly instead");
+            }
             if (!(cur instanceof ObjectReference obj)) {
                 throw new NotFound("cannot call " + gs.name() + "() on non-object (" + typeLabel(cur) + ")");
             }
@@ -312,6 +344,10 @@ public final class ExprCapture {
         return null;
     }
 
+    private static final Set<String> BOXED_TYPES = Set.of(
+            "java.lang.Integer", "java.lang.Long", "java.lang.Double", "java.lang.Float",
+            "java.lang.Short", "java.lang.Byte", "java.lang.Boolean", "java.lang.Character");
+
     private static final Set<String> SAFE_NOARG_METHODS = Set.of(
             "size", "isEmpty", "length", "toString", "hashCode", "getClass");
 
@@ -332,6 +368,12 @@ public final class ExprCapture {
     }
 
     // ---------------------------------------------------------------- render
+
+    /** Public entry point for rendering a single value (used by get_variables, etc.). */
+    public static ValueNode renderValue(Value v, Limits limits, ThreadReference thread) {
+        return renderValue(v, limits, 0, new HashSet<>(), thread);
+    }
+
     private static ValueNode renderValue(Value v, Limits limits, int depth, Set<Long> visited, ThreadReference thread) {
         if (v == null) {
             return ValueNode.nullVal("null");
@@ -353,6 +395,18 @@ public final class ExprCapture {
         }
         if (v instanceof ObjectReference obj) {
             String type = obj.referenceType().name();
+            // Boxed primitives: read the 'value' field directly (no invoke, safe_mode safe).
+            if (BOXED_TYPES.contains(type)) {
+                Field vf = obj.referenceType().fieldByName("value");
+                if (vf != null) {
+                    try {
+                        Value inner = obj.getValue(vf);
+                        if (inner instanceof PrimitiveValue pv) {
+                            return ValueNode.primitive(type, primitiveLiteral(pv));
+                        }
+                    } catch (Throwable ignored) { /* fall through to generic rendering */ }
+                }
+            }
             // Render java.util.List as an expanded array (size() + get(i)), per the
             // "collections expand to first N elements" rule. Positional [i] indexing on
             // Lists is intentionally NOT supported in capture (use the whole-list render).
@@ -360,18 +414,18 @@ public final class ExprCapture {
                 return renderList(thread, obj, type, limits, depth, visited);
             }
             if (depth >= limits.renderDepth) {
-                return ValueNode.toStringNode(type, truncate(safeToString(obj, thread), limits.toStringLimit));
+                return ValueNode.toStringNode(type, truncate(safeToString(obj, thread, limits), limits.toStringLimit));
             }
             long id = obj.uniqueID();
             if (visited.contains(id)) {
-                return ValueNode.toStringNode(type, "<cycle> " + truncate(safeToString(obj, thread), limits.toStringLimit));
+                return ValueNode.toStringNode(type, "<cycle> " + truncate(safeToString(obj, thread, limits), limits.toStringLimit));
             }
             visited.add(id);
             List<Field> allFields;
             try {
                 allFields = obj.referenceType().allFields();
             } catch (Throwable t) {
-                return ValueNode.toStringNode(type, truncate(safeToString(obj, thread), limits.toStringLimit));
+                return ValueNode.toStringNode(type, truncate(safeToString(obj, thread, limits), limits.toStringLimit));
             }
             Map<String, ValueNode> fields = new LinkedHashMap<>();
             int shown = 0;
@@ -409,12 +463,15 @@ public final class ExprCapture {
                                         String type, Limits limits, int depth, Set<Long> visited) {
         long id = obj.uniqueID();
         if (visited.contains(id)) {
-            return ValueNode.toStringNode(type, "<cycle> " + truncate(safeToString(obj, thread), limits.toStringLimit));
+            return ValueNode.toStringNode(type, "<cycle> " + truncate(safeToString(obj, thread, limits), limits.toStringLimit));
         }
         visited.add(id);
+        if (limits.safeMode) {
+            return ValueNode.toStringNode(type, "<List, safe_mode: no size/get invocation>");
+        }
         int total = invokeIntNoArg(thread, obj, "size", -1);
         if (total < 0) {
-            return ValueNode.toStringNode(type, truncate(safeToString(obj, thread), limits.toStringLimit));
+            return ValueNode.toStringNode(type, truncate(safeToString(obj, thread, limits), limits.toStringLimit));
         }
         int take = Math.min(total, limits.collectionLimit);
         // find get(int) method
@@ -491,7 +548,10 @@ public final class ExprCapture {
         return pv.toString();
     }
 
-    private static String safeToString(ObjectReference obj, ThreadReference thread) {
+    private static String safeToString(ObjectReference obj, ThreadReference thread, Limits limits) {
+        if (limits != null && limits.safeMode) {
+            return "<" + obj.referenceType().name() + " (safe_mode: no toString)>";
+        }
         if (thread != null) {
             try {
                 for (Method m : obj.referenceType().methodsByName("toString")) {

@@ -62,4 +62,36 @@ public final class ClassResolver {
         }
         return hits.size() == 1 ? hits.get(0) : null;
     }
+
+    /** Paginated enumeration of loaded classes (for list_classes). */
+    public static EnumerateResult enumerate(VirtualMachine vm, String prefix, boolean includeProxies,
+                                            int limit, int offset) {
+        List<ClassCandidate> all = new ArrayList<>();
+        for (ReferenceType rt : vm.allClasses()) {
+            if (prefix != null && !prefix.isBlank() && !rt.name().startsWith(prefix)) continue;
+            boolean proxy = ProxyFilter.isProxy(rt);
+            if (proxy && !includeProxies) continue;
+            boolean prepared;
+            try {
+                prepared = rt.isPrepared();
+            } catch (Throwable t) {
+                prepared = false;
+            }
+            all.add(new ClassCandidate(rt.name(), ClassCandidate.simpleNameOf(rt.name()),
+                    proxy, rt instanceof InterfaceType, prepared));
+        }
+        int total = all.size();
+        int from = Math.min(offset, total);
+        int to = Math.min(offset + limit, total);
+        List<ClassCandidate> page = all.subList(from, to);
+        return new EnumerateResult(total, page);
+    }
+
+    public static final class EnumerateResult {
+        public final int total;
+        public final List<ClassCandidate> page;
+        public EnumerateResult(int total, List<ClassCandidate> page) {
+            this.total = total; this.page = page;
+        }
+    }
 }

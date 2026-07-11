@@ -1,8 +1,8 @@
 package com.ylw.jdbmcp.debug;
 
 import com.sun.jdi.Location;
-import com.sun.jdi.request.BreakpointRequest;
 import com.sun.jdi.request.ClassPrepareRequest;
+import com.sun.jdi.request.EventRequest;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,13 +20,33 @@ public class Breakpoint {
     /** Resolved concrete class (after ClassResolver). */
     public String resolvedClass;
     public int hitCount = 0;
-    public final List<BreakpointRequest> requests = new ArrayList<>();
+    public final List<EventRequest> requests = new ArrayList<>();
     public final List<Location> locations = new ArrayList<>();
 
+    /** "line" = code breakpoint, "exception" = exception breakpoint. */
+    public String type = "line";
     /** "armed" = breakpoint active; "deferred" = waiting for the class to load. */
     public String status = "armed";
     /** Watcher set when the class isn't loaded yet; nulled once materialized. */
     public ClassPrepareRequest classPrepareRequest;
+
+    // ---- per-breakpoint capture overrides (null = inherit session) ----
+    public Integer bpMaxDepth;
+    public Integer bpMaxStrLen;
+    public Integer bpMaxCollSize;
+    public Boolean bpSafeMode;
+
+    /** Synthesize effective limits from session base + per-breakpoint overrides. */
+    public ExprCapture.Limits effectiveOver(ExprCapture.Limits base) {
+        if (bpMaxDepth == null && bpMaxStrLen == null && bpMaxCollSize == null && bpSafeMode == null) return base;
+        int depth = bpMaxDepth != null ? bpMaxDepth : base.pathDepth;
+        return new ExprCapture.Limits(
+                depth, depth,
+                bpMaxStrLen != null ? bpMaxStrLen : base.toStringLimit,
+                bpMaxCollSize != null ? bpMaxCollSize : base.collectionLimit,
+                base.maxFields,
+                bpSafeMode != null ? bpSafeMode : base.safeMode);
+    }
 
     public Breakpoint(String id, String classFqcn, String methodName, Integer line,
                       List<String> captures, boolean includeProxies) {

@@ -2,6 +2,7 @@ package com.ylw.jdbmcp.debug;
 
 import com.ylw.jdbmcp.snapshot.CaptureResult;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -32,8 +33,11 @@ public final class CommandBus {
         queue.clear();
     }
 
-    sealed interface Command permits ExploreCmd, EvalCmd, ResumeCmd {}
+    sealed interface Command permits ExploreCmd, EvalCmd, ResumeCmd, GetFramesCmd, GetVariablesCmd, StepCmd {}
     record ExploreCmd(String expr, CompletableFuture<CaptureResult> future) implements Command {}
     record EvalCmd(String code, CompletableFuture<CaptureResult> future) implements Command {}
     record ResumeCmd(CompletableFuture<Map<String, Object>> future) implements Command {}
+    record GetFramesCmd(int maxFrames, CompletableFuture<Map<String, Object>> future) implements Command {}
+    record GetVariablesCmd(int frameIdx, List<String> expandPaths, CompletableFuture<Map<String, Object>> future) implements Command {}
+    record StepCmd(String kind, CompletableFuture<Map<String, Object>> future) implements Command {}
 }

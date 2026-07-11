@@ -8,6 +8,7 @@ public class UserService {
 
     private int callCount = 0;
     private String serviceName = "userService";
+    private Integer boxedCount = 42;   // for boxed primitive test
 
     /** Returns a user whose address is null — triggers null-break on user.address.id. */
     public User findById(long id) {
@@ -42,6 +43,12 @@ public class UserService {
             c = c.getNext();
         }
         return s;
+    }
+
+    /** Throws a DemoException for testing exception breakpoints. */
+    public void processFailing() {
+        callCount++;
+        throw new DemoException("test exception for breakpoint");
     }
 
     public int getCallCount() { return callCount; }

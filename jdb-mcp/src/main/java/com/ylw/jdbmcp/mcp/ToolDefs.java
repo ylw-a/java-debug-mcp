@@ -1,5 +1,6 @@
 package com.ylw.jdbmcp.mcp;
 
+import com.ylw.jdbmcp.StartParams;
 import com.ylw.jdbmcp.debug.DebugSession;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -29,7 +30,9 @@ public final class ToolDefs {
                     + "returns a lightweight structured snapshot. Full heap state is never dumped.\n"
                     + "\n"
                     + "WORKFLOW:\n"
-                    + "1. start_session - launch (per config) or attach to the target JVM.\n"
+                    + "1. start_session - launch the target JVM (pass 'jar', or 'mainClass'+'classpath') or attach to a\n"
+                    + "   running JVM (pass 'attach':{host,port}). ZERO-CONFIG: no file needed. Optional limits/budgets\n"
+                    + "   overrides accepted. To discover a running JVM's port first, call list_debuggable_jvms.\n"
                     + "2. set_breakpoint - give class + method/line, the captures (expressions), and mode A or B. "
                     + "Returns a breakpointId you use later.\n"
                     + "3. Retrieve results:\n"
@@ -37,7 +40,8 @@ public final class ToolDefs {
                     + "Call list_hits to poll snapshots - it may return 0 until the target reaches the code; "
                     + "retry after a moment. Hits accumulate (per-breakpoint ordinals, 1-based).\n"
                     + "   - Mode B (blocking): blocks until the hit, then the JVM STAYS SUSPENDED. Inspect via "
-                    + "explore (read-path, budgeted) or eval (side-effects, off by default), then call resume.\n"
+                    + "explore (read-path, budgeted), get_frames/get_variables (full stack + locals), step (over/out/into), "
+                    + "or eval (side-effects, off by default), then call resume.\n"
                     + "4. stop_session when done.\n"
                     + "\n"
                     + "EXPRESSION GRAMMAR (for captures and explore):\n"
@@ -50,7 +54,10 @@ public final class ToolDefs {
                     + "The root is one of: this, args[N], or a local-variable name.\n"
                     + "If an intermediate segment is null you get status=null_break naming WHERE it broke "
                     + "(e.g. user.address.id with address=null -> null_break at 'address') - far more useful than a bare null.\n"
-                    + "Limits: path depth 5, toString 500 chars, collection/array expanded to first 20 elements.\n"
+                    + "Limits: path depth 5, toString 500 chars, collection/array expanded to first 20 elements. "
+                    + "These are conservative DEFAULTS (the recommended starting point, not a ceiling). If a capture "
+                    + "returns depth_limit or truncation AND you have a concrete need, call configure to raise the "
+                    + "specific limit - raises are logged and flagged. Lowering is always safe.\n"
                     + "\n"
                     + "CAPTURE vs EVAL: capture is read-only (fields, no-arg getters, indexing). eval invokes an "
                     + "arbitrary no-arg method and may have side effects (e.g. user.delete()); disabled by default, "
@@ -74,19 +81,70 @@ public final class ToolDefs {
     public static List<McpServerFeatures.SyncToolSpecification> build(DebugSession session) {
         List<McpServerFeatures.SyncToolSpecification> tools = new ArrayList<>();
         tools.add(tool("start_session",
-                "Step 1 of the debug workflow. Launch the target JVM (per jdb-mcp.json config) under a JDWP agent "
-                        + "and attach, OR pass attach:{host,port} to attach to an already-running JVM. Returns "
-                        + "{status, pid, loadedClasses}. Must be called before any breakpoint tool.",
-                "{\"type\":\"object\",\"properties\":{\"attach\":{\"type\":\"object\",\"properties\":{"
-                        + "\"host\":{\"type\":\"string\"},\"port\":{\"type\":\"integer\"}},"
-                        + "\"description\":\"If set, attach to a running JVM at host:port instead of launching from config.\"}},"
+                "Step 1 of the debug workflow. ZERO-CONFIG: pass target info directly as parameters. "
+                        + "Launch mode: provide 'jar' (executable) or 'mainClass'+'classpath'. "
+                        + "Attach mode: provide 'attach':{host,port}. "
+                        + "All limits/budgets are optional (sensible defaults). Returns {status,pid,loadedClasses,limits}. "
+                        + "Must be called before any breakpoint tool. "
+                        + "Tip: if you don't know the target JVM's port, call list_debuggable_jvms first.",
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"jar\":{\"type\":\"string\",\"description\":\"Executable jar path (launch mode, uses -jar)\"},"
+                        + "\"mainClass\":{\"type\":\"string\",\"description\":\"Main class FQCN (launch mode, with -cp)\"},"
+                        + "\"classpath\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Classpath entries for launch mode\"},"
+                        + "\"jvmArgs\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Extra JVM arguments\"},"
+                        + "\"args\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Program arguments\"},"
+                        + "\"workingDir\":{\"type\":\"string\",\"description\":\"Working directory\"},"
+                        + "\"suspend\":{\"type\":\"boolean\",\"default\":true,\"description\":\"Suspend target until debugger attaches\"},"
+                        + "\"jdkPath\":{\"type\":\"string\",\"description\":\"JDK home (default: runtime JDK)\"},"
+                        + "\"attach\":{\"type\":\"object\",\"properties\":{\"host\":{\"type\":\"string\"},\"port\":{\"type\":\"integer\"}},"
+                        + "\"description\":\"Attach to a running JVM at host:port instead of launching\"},"
+                        + "\"maxDepth\":{\"type\":\"integer\",\"description\":\"Max expression dereferences (default 5)\"},"
+                        + "\"maxStrLen\":{\"type\":\"integer\",\"description\":\"Max toString/string chars (default 500)\"},"
+                        + "\"maxCollSize\":{\"type\":\"integer\",\"description\":\"Max collection/array elements (default 20)\"},"
+                        + "\"maxFields\":{\"type\":\"integer\",\"description\":\"Max object fields (default 50)\"},"
+                        + "\"exploreBudget\":{\"type\":\"integer\",\"description\":\"Explore budget per mode-B suspend (default 5)\"},"
+                        + "\"evalBudget\":{\"type\":\"integer\",\"description\":\"Eval budget per mode-B suspend (default 2)\"},"
+                        + "\"stepBudget\":{\"type\":\"integer\",\"description\":\"Step budget per mode-B suspend (default 5)\"},"
+                        + "\"modeBTimeoutSec\":{\"type\":\"integer\",\"description\":\"Mode-B timeout in seconds (default 60)\"},"
+                        + "\"allowEval\":{\"type\":\"boolean\",\"description\":\"Enable the dangerous eval tool (default false)\"},"
+                        + "\"safeMode\":{\"type\":\"boolean\",\"description\":\"Safe mode: no method invocation (default false)\"}},"
                         + "\"additionalProperties\":false}",
-                (ex, a) -> {
-                    Map<String, Object> attach = obj(a, "attach");
-                    String host = attach != null ? str(attach, "host") : null;
-                    Integer port = attach != null ? intArg(attach, "port") : null;
-                    return ToolResponses.from(session.start(host, port));
-                }));
+                (ex, a) -> ToolResponses.from(session.start(startParams(a)))));
+
+        tools.add(tool("configure",
+                "Adjust session limits/budgets mid-session WITHOUT losing breakpoints or state. "
+                        + "All fields optional - only pass what you need to change. "
+                        + "Raising a limit ABOVE the default (e.g. maxDepth>5) logs a warning (anti-addiction: "
+                        + "explicit overrides are tracked). Lowering is always silent. "
+                        + "Returns the full effective configuration. "
+                        + "Use this when a capture returns depth_limit/truncation AND you have a concrete, "
+                        + "justified need for deeper inspection. " + ANTI_ADDICTION,
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"maxDepth\":{\"type\":\"integer\",\"description\":\"Max expression dereferences\"},"
+                        + "\"maxStrLen\":{\"type\":\"integer\",\"description\":\"Max toString/string chars\"},"
+                        + "\"maxCollSize\":{\"type\":\"integer\",\"description\":\"Max collection elements\"},"
+                        + "\"maxFields\":{\"type\":\"integer\",\"description\":\"Max object fields\"},"
+                        + "\"safeMode\":{\"type\":\"boolean\",\"description\":\"Safe mode: no method invocation (getters, toString, List size)\"},"
+                        + "\"exploreBudget\":{\"type\":\"integer\",\"description\":\"Explore budget per mode-B suspend\"},"
+                        + "\"evalBudget\":{\"type\":\"integer\",\"description\":\"Eval budget per mode-B suspend\"},"
+                        + "\"stepBudget\":{\"type\":\"integer\",\"description\":\"Step budget per mode-B suspend\"},"
+                        + "\"modeBTimeoutSec\":{\"type\":\"integer\",\"description\":\"Mode-B timeout in seconds\"},"
+                        + "\"allowEval\":{\"type\":\"boolean\",\"description\":\"Enable the dangerous eval tool\"}},"
+                        + "\"additionalProperties\":false}",
+                (ex, a) -> ToolResponses.from(session.configure(
+                        intArg(a, "maxDepth"), intArg(a, "maxStrLen"), intArg(a, "maxCollSize"),
+                        intArg(a, "maxFields"), boolArg(a, "safeMode"),
+                        intArg(a, "exploreBudget"), intArg(a, "evalBudget"),
+                        intArg(a, "stepBudget"), intArg(a, "modeBTimeoutSec"), boolArg(a, "allowEval")))));
+
+        tools.add(tool("list_debuggable_jvms",
+                "PRE-ATTACH DISCOVERY. Scan for running JVMs with JDWP debug agents that can be attached to. "
+                        + "Runs jps -lv and parses -agentlib:jdwp lines. Returns processes with pid, mainClass, "
+                        + "and jdwp:{server,address,port,attachable}. Use this BEFORE start_session when you need "
+                        + "to attach to an already-running JVM but don't know the port. "
+                        + "Does not require an attached session.",
+                "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
+                (ex, a) -> ToolResponses.from(session.listDebuggableJvms())));
 
         tools.add(tool("stop_session",
                 "Detach from the target JVM and terminate it (if launched). Clears all breakpoints and hits.",
@@ -99,15 +157,30 @@ public final class ToolDefs {
                 "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
                 (ex, a) -> ToolResponses.from(session.sessionStatus())));
 
-        tools.add(tool("list_classes",
-                "Resolve a fuzzy/short class name to loaded classes (Spring proxies filtered out by default). "
-                        + "Call this BEFORE set_breakpoint if you are unsure of the exact class - Spring beans are often "
-                        + "CGLIB proxies or impl classes, not the interface name you have in mind.",
+        tools.add(tool("resolve_class",
+                "Fuzzy-resolve a class name to confirm the exact FQCN before calling set_breakpoint. "
+                        + "Returns candidate classes (with proxy/interface/prepared flags). "
+                        + "If empty, the class isn't loaded yet - set_breakpoint will arm a deferred watcher. "
+                        + "Use this when you're unsure about the exact class name (Spring beans are often wrapped "
+                        + "in CGLIB proxies or impl classes).",
                 "{\"type\":\"object\",\"properties\":{"
                         + "\"pattern\":{\"type\":\"string\",\"description\":\"fuzzy/short class name, e.g. UserService\"},"
                         + "\"include_proxies\":{\"type\":\"boolean\",\"default\":false}},"
                         + "\"required\":[\"pattern\"],\"additionalProperties\":false}",
-                (ex, a) -> ToolResponses.from(session.listClasses(str(a, "pattern"), bool(a, "include_proxies", false)))));
+                (ex, a) -> ToolResponses.from(session.resolveClass(str(a, "pattern"), bool(a, "include_proxies", false)))));
+
+        tools.add(tool("list_classes",
+                "Paginated enumeration of loaded classes (for orientation, not resolution). "
+                        + "Use resolve_class to confirm a specific class name before set_breakpoint; "
+                        + "use list_classes to browse what's loaded. Default limit 100, max 500.",
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"prefix\":{\"type\":\"string\",\"description\":\"Optional package prefix filter, e.g. com.example\"},"
+                        + "\"include_proxies\":{\"type\":\"boolean\",\"default\":false},"
+                        + "\"limit\":{\"type\":\"integer\",\"description\":\"Page size (default 100, max 500)\"},"
+                        + "\"offset\":{\"type\":\"integer\",\"description\":\"Pagination offset (default 0)\"}},"
+                        + "\"additionalProperties\":false}",
+                (ex, a) -> ToolResponses.from(session.listClasses(str(a, "prefix"), bool(a, "include_proxies", false),
+                        intArg(a, "limit"), intArg(a, "offset")))));
 
         tools.add(tool("set_breakpoint",
                 "Step 2 of the debug workflow. Set a breakpoint and PRE-DECLARE the data to capture (see the "
@@ -128,10 +201,37 @@ public final class ToolDefs {
                         + "\"pre-declared read-only expressions, e.g. this.id, user.address.id, args[0].name, user.getAddress().getId(), args[1].items[0].sku\"},"
                         + "\"mode\":{\"type\":\"string\",\"enum\":[\"A\",\"B\"],\"default\":\"A\"},"
                         + "\"include_proxies\":{\"type\":\"boolean\",\"default\":false},"
-                        + "\"timeout\":{\"type\":\"integer\",\"description\":\"mode-B timeout in seconds (default 60)\"}},"
+                        + "\"timeout\":{\"type\":\"integer\",\"description\":\"mode-B timeout in seconds (default 60)\"},"
+                        + "\"max_depth\":{\"type\":\"integer\",\"description\":\"Override session maxDepth for this bp only\"},"
+                        + "\"max_str_len\":{\"type\":\"integer\",\"description\":\"Override session maxStrLen for this bp only\"},"
+                        + "\"max_coll_size\":{\"type\":\"integer\",\"description\":\"Override session maxCollSize for this bp only\"},"
+                        + "\"safe_mode\":{\"type\":\"boolean\",\"description\":\"Override session safeMode for this bp only\"}},"
                         + "\"required\":[\"class\"],\"additionalProperties\":false}",
                 (ex, a) -> ToolResponses.from(session.setBreakpoint(
                         str(a, "class"), str(a, "method"), intArg(a, "line"),
+                        strList(a, "captures"), str(a, "mode"),
+                        bool(a, "include_proxies", false), intArg(a, "timeout"),
+                        intArg(a, "max_depth"), intArg(a, "max_str_len"), intArg(a, "max_coll_size"),
+                        boolArg(a, "safe_mode")))));
+
+        tools.add(tool("set_exception_breakpoint",
+                "Set a breakpoint that fires when a specific exception is thrown (including subclasses). "
+                        + "Captures use 'e' as the root to access the thrown exception (e.g. e.getMessage(), "
+                        + "e.getCause().message, e.reason). Works with both mode A and B. "
+                        + "The exception class is resolved via fuzzy matching (e.g. 'NullPointerException' or 'NPE'). "
+                        + ANTI_ADDICTION,
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"exception_class\":{\"type\":\"string\",\"description\":\"Exception class name, e.g. NullPointerException or DemoException\"},"
+                        + "\"caught\":{\"type\":\"boolean\",\"default\":true,\"description\":\"Fire on caught exceptions\"},"
+                        + "\"uncaught\":{\"type\":\"boolean\",\"default\":true,\"description\":\"Fire on uncaught exceptions\"},"
+                        + "\"captures\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},"
+                        + "\"description\":\"pre-declared expressions (root 'e' = the exception), e.g. e.getMessage(), e.reason\"},"
+                        + "\"mode\":{\"type\":\"string\",\"enum\":[\"A\",\"B\"],\"default\":\"A\"},"
+                        + "\"include_proxies\":{\"type\":\"boolean\",\"default\":false},"
+                        + "\"timeout\":{\"type\":\"integer\",\"description\":\"mode-B timeout in seconds (default 60)\"}},"
+                        + "\"required\":[\"exception_class\"],\"additionalProperties\":false}",
+                (ex, a) -> ToolResponses.from(session.setExceptionBreakpoint(
+                        str(a, "exception_class"), bool(a, "caught", true), bool(a, "uncaught", true),
                         strList(a, "captures"), str(a, "mode"),
                         bool(a, "include_proxies", false), intArg(a, "timeout")))));
 
@@ -159,6 +259,42 @@ public final class ToolDefs {
                 "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
                 (ex, a) -> ToolResponses.from(session.resume())));
 
+        tools.add(tool("get_frames",
+                "Mode B only. Get the full call stack of the suspended thread. Each frame includes "
+                        + "index, className, method, line, and sourceFile. Passive inspection (no budget consumed). "
+                        + "Use this to orient yourself when you hit a breakpoint - see where you are in the call chain.",
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"max_frames\":{\"type\":\"integer\",\"description\":\"Max frames to return (default 200)\"}},"
+                        + "\"additionalProperties\":false}",
+                (ex, a) -> ToolResponses.from(session.getFrames(intArg(a, "max_frames")))));
+
+        tools.add(tool("get_variables",
+                "Mode B only. Get visible local variables for a specific stack frame, with optional deep "
+                        + "expansion of selected paths. Returns each variable's name, type, and rendered value. "
+                        + "If the target was compiled without -g:vars, returns a clear error suggesting args[N] "
+                        + "instead. Passive inspection (no budget consumed). "
+                        + "expand_paths: optional list of expressions to deep-evaluate on that frame (uses the "
+                        + "same capture engine as set_breakpoint).",
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"frame_index\":{\"type\":\"integer\",\"description\":\"Frame index (0=top, default 0)\"},"
+                        + "\"expand_paths\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},"
+                        + "\"description\":\"Expressions to deep-evaluate, e.g. ['this.address', 'args[0].name']\"}},"
+                        + "\"additionalProperties\":false}",
+                (ex, a) -> ToolResponses.from(session.getVariables(intArg(a, "frame_index"), strList(a, "expand_paths")))));
+
+        tools.add(tool("step",
+                "Mode B only. Single-step the suspended thread one line over/out/into the current method. "
+                        + "Step budget (default 5 per suspend) - DO NOT step through entire methods; use for "
+                        + "short, focused path-tracing. Returns the new location {className, method, line, sourceFile}. "
+                        + "The JVM stays suspended after the step so you can inspect variables or step again. "
+                        + "createStepRequest parameter order: (thread, STEP_LINE, depth) - NOT (thread, depth, STEP_LINE)! "
+                        + ANTI_ADDICTION,
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"kind\":{\"type\":\"string\",\"enum\":[\"over\",\"out\",\"into\"],"
+                        + "\"default\":\"over\",\"description\":\"Step kind: over (next line), out (to caller), into (into method)\"}},"
+                        + "\"additionalProperties\":false}",
+                (ex, a) -> ToolResponses.from(session.step(str(a, "kind")))));
+
         tools.add(tool("explore",
                 "ESCAPE HATCH (mode B only, while JVM is suspended). Evaluate a read-only capture expression on the "
                         + "current frame for ad-hoc inspection. Strictly budgeted per suspend - do NOT use this as a "
@@ -171,7 +307,7 @@ public final class ToolDefs {
 
         tools.add(tool("eval",
                 "DANGEROUS (mode B only). Invoke an arbitrary no-arg method, e.g. user.delete() or cache.evict(). "
-                        + "Disabled by default; requires allowEval=true in config AND explicit user consent for each call. "
+                        + "Disabled by default; requires allowEval=true (via start_session or configure) AND explicit user consent for each call. "
                         + "Separate from capture by design: capture is read-only, eval can have side effects. " + ANTI_ADDICTION,
                 "{\"type\":\"object\",\"properties\":{"
                         + "\"code\":{\"type\":\"string\",\"description\":\"no-arg method invocation, e.g. user.delete()\"}},"
@@ -189,6 +325,34 @@ public final class ToolDefs {
     }
 
     // ---- arg extractors ----
+    private static StartParams startParams(Map<String, Object> a) {
+        StartParams p = new StartParams();
+        p.jar = str(a, "jar");
+        p.mainClass = str(a, "mainClass");
+        p.classpath = strList(a, "classpath");
+        p.jvmArgs = strList(a, "jvmArgs");
+        p.args = strList(a, "args");
+        p.workingDir = str(a, "workingDir");
+        p.suspend = bool(a, "suspend", true);
+        p.jdkPath = str(a, "jdkPath");
+        Map<String, Object> attach = obj(a, "attach");
+        if (attach != null) {
+            p.attachHost = str(attach, "host");
+            p.attachPort = intArg(attach, "port");
+        }
+        p.maxDepth = intArg(a, "maxDepth");
+        p.maxStrLen = intArg(a, "maxStrLen");
+        p.maxCollSize = intArg(a, "maxCollSize");
+        p.maxFields = intArg(a, "maxFields");
+        p.exploreBudget = intArg(a, "exploreBudget");
+        p.evalBudget = intArg(a, "evalBudget");
+        p.stepBudget = intArg(a, "stepBudget");
+        p.modeBTimeoutSec = intArg(a, "modeBTimeoutSec");
+        p.allowEval = boolArg(a, "allowEval");
+        p.safeMode = boolArg(a, "safeMode");
+        return p;
+    }
+
     private static String str(Map<String, Object> a, String k) {
         if (a == null) return null;
         Object v = a.get(k);
@@ -207,6 +371,14 @@ public final class ToolDefs {
         if (a == null) return def;
         Object v = a.get(k);
         if (v == null) return def;
+        if (v instanceof Boolean b) return b;
+        return Boolean.parseBoolean(v.toString());
+    }
+
+    private static Boolean boolArg(Map<String, Object> a, String k) {
+        if (a == null) return null;
+        Object v = a.get(k);
+        if (v == null) return null;
         if (v instanceof Boolean b) return b;
         return Boolean.parseBoolean(v.toString());
     }

@@ -1,7 +1,5 @@
 package com.ylw.jdbmcp.debug;
 
-import com.ylw.jdbmcp.Config;
-
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -11,46 +9,56 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Launches the target JVM as a child process with a JDWP agent, then exposes the
- * transport address (host/port) so {@code DebugSession} can attach via JDI SocketAttach.
+ * 启动目标 JVM 为子进程（带 JDWP agent），暴露 transport 地址（host/port）供 SocketAttach。
  *
- * <p>With {@code port=0} the target picks a free port and prints a "Listening for transport
- * dt_socket at address: ..." line on stderr; we parse it. Both target stdout and stderr are
- * drained by daemon threads for the process lifetime so their OS buffers never fill.
+ * <p>{@code port=0} 时目标自选空闲端口，并在 stdout/stderr 打印 "Listening for transport
+ * dt_socket at address: ..." 行；两个 drain 线程都监听该行（JDK 17 实测在 stdout）。目标输出
+ * 全部导到 stderr，绝不走 stdout（那是 MCP 协议通道）。
+ *
+ * <p>jar 与 mainClass 二选一：给 jar 走 {@code java -jar}（用 manifest 主类），给 mainClass 走
+ * {@code java -cp classpath mainClass}。
  */
 public final class TargetLauncher {
 
     public record LaunchedTarget(Process process, String host, int port) {}
 
-    public static LaunchedTarget launch(Config.TargetConfig target, String host, int port) throws IOException {
-        String javaHome = System.getProperty("java.home");
+    public static LaunchedTarget launch(TargetSpec spec, String host, int port) throws IOException {
+        String javaHome = spec.jdkPath() != null && !spec.jdkPath().isBlank()
+                ? spec.jdkPath() : System.getProperty("java.home");
         boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
         String javaExe = javaHome + File.separator + "bin" + File.separator + "java" + (windows ? ".exe" : "");
         File javaFile = new File(javaExe);
         if (!javaFile.exists()) {
             throw new IOException("java executable not found at " + javaExe
-                    + " (set java.home to a JDK 17)");
+                    + " (set jdkPath to a JDK 17, or rely on java.home)");
         }
 
-        String cp = String.join(File.pathSeparator, target.classpath);
-        String suspend = target.suspend ? "y" : "n";
+        boolean useJar = spec.jar() != null && !spec.jar().isBlank();
+        if (!useJar && (spec.mainClass() == null || spec.mainClass().isBlank())) {
+            throw new IOException("start_session requires 'jar' or 'mainClass' for launch mode");
+        }
+
+        String cp = spec.classpath() == null ? "" : String.join(File.pathSeparator, spec.classpath());
+        String suspend = spec.suspend() ? "y" : "n";
         String address = host + ":" + port;
 
         List<String> cmd = new ArrayList<>();
         cmd.add(javaExe);
         cmd.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=" + suspend + ",address=" + address);
-        if (target.jvmArgs != null) cmd.addAll(target.jvmArgs);
-        if (!cp.isEmpty()) { cmd.add("-cp"); cmd.add(cp); }
-        if (target.mainClass == null || target.mainClass.isBlank()) {
-            throw new IOException("target.mainClass is not set in config");
+        if (spec.jvmArgs() != null) cmd.addAll(spec.jvmArgs());
+        if (useJar) {
+            cmd.add("-jar");
+            cmd.add(spec.jar());
+        } else {
+            if (!cp.isEmpty()) { cmd.add("-cp"); cmd.add(cp); }
+            cmd.add(spec.mainClass());
         }
-        cmd.add(target.mainClass);
-        if (target.args != null) cmd.addAll(target.args);
+        if (spec.args() != null) cmd.addAll(spec.args());
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(false);
-        if (target.workingDir != null && !target.workingDir.isBlank()) {
-            pb.directory(new File(target.workingDir));
+        if (spec.workingDir() != null && !spec.workingDir().isBlank()) {
+            pb.directory(new File(spec.workingDir()));
         }
         Process p = pb.start();
 

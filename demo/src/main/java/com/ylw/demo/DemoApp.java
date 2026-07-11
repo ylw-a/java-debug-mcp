@@ -28,6 +28,13 @@ public class DemoApp {
         Node head = buildCyclicChain(10);
         svc.sumChain(head);
 
+        // Scenario D: throws an exception -> exception breakpoint testing.
+        try {
+            svc.processFailing();
+        } catch (DemoException e) {
+            System.out.println("[demo] caught exception: " + e.getMessage());
+        }
+
         System.out.println("[demo] done. callCount=" + svc.getCallCount());
     }
 

@@ -7,6 +7,7 @@ import com.sun.jdi.VirtualMachine;
 import com.sun.jdi.request.BreakpointRequest;
 import com.sun.jdi.request.ClassPrepareRequest;
 import com.sun.jdi.request.EventRequest;
+import com.sun.jdi.request.ExceptionRequest;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -61,7 +62,9 @@ public class BreakpointManager {
     }
 
     public SetResult setBreakpoint(String classPattern, String methodName, Integer line,
-                                   List<String> captures, boolean includeProxies) {
+                                   List<String> captures, boolean includeProxies,
+                                   Integer bpMaxDepth, Integer bpMaxStrLen,
+                                   Integer bpMaxCollSize, Boolean bpSafeMode) {
         ReferenceType rt = ClassResolver.pickOne(vm, classPattern, includeProxies);
         if (rt == null) {
             List<ClassCandidate> cands = ClassResolver.resolve(vm, classPattern, includeProxies);
@@ -69,7 +72,8 @@ public class BreakpointManager {
                 return SetResult.ambiguous(cands);
             }
             // Class not loaded yet: arm a deferred breakpoint via ClassPrepareRequest.
-            return armDeferred(classPattern, methodName, line, captures, includeProxies);
+            return armDeferred(classPattern, methodName, line, captures, includeProxies,
+                    bpMaxDepth, bpMaxStrLen, bpMaxCollSize, bpSafeMode);
         }
 
         List<Location> locs = findLocations(rt, methodName, line);
@@ -98,6 +102,10 @@ public class BreakpointManager {
         String id = "bp-" + idGen.getAndIncrement();
         Breakpoint bp = new Breakpoint(id, rt.name(), methodName, line, captures, includeProxies);
         bp.resolvedClass = rt.name();
+        bp.bpMaxDepth = bpMaxDepth;
+        bp.bpMaxStrLen = bpMaxStrLen;
+        bp.bpMaxCollSize = bpMaxCollSize;
+        bp.bpSafeMode = bpSafeMode;
         bp.requests.addAll(reqs);
         bp.locations.addAll(locs);
         bp.status = "armed";
@@ -109,11 +117,17 @@ public class BreakpointManager {
 
     /** Deferred breakpoint: the class isn't loaded yet. Watch for it to prepare, then materialize. */
     private SetResult armDeferred(String classPattern, String methodName, Integer line,
-                                  List<String> captures, boolean includeProxies) {
+                                  List<String> captures, boolean includeProxies,
+                                  Integer bpMaxDepth, Integer bpMaxStrLen,
+                                  Integer bpMaxCollSize, Boolean bpSafeMode) {
         String id = "bp-" + idGen.getAndIncrement();
         Breakpoint bp = new Breakpoint(id, classPattern, methodName, line, captures, includeProxies);
         bp.resolvedClass = classPattern + " (pending load)";
         bp.status = "deferred";
+        bp.bpMaxDepth = bpMaxDepth;
+        bp.bpMaxStrLen = bpMaxStrLen;
+        bp.bpMaxCollSize = bpMaxCollSize;
+        bp.bpSafeMode = bpSafeMode;
         try {
             ClassPrepareRequest cpr = vm.eventRequestManager().createClassPrepareRequest();
             // JDI classFilter wildcards match package prefixes only (e.g. *.Foo, com.example.*),
@@ -143,6 +157,27 @@ public class BreakpointManager {
     public boolean materialize(Breakpoint bp, ReferenceType rt) {
         if (bp == null || !"deferred".equals(bp.status)) return false;
         if (!includeProxiesOk(bp, rt)) return false;
+
+        if ("exception".equals(bp.type)) {
+            // Materialize deferred exception breakpoint
+            try {
+                ExceptionRequest req = vm.eventRequestManager().createExceptionRequest(rt, true, true);
+                req.setSuspendPolicy(ExceptionRequest.SUSPEND_EVENT_THREAD);
+                req.enable();
+                bp.requests.add(req);
+                bp.resolvedClass = rt.name();
+                bp.status = "armed";
+                if (bp.classPrepareRequest != null) {
+                    try { vm.eventRequestManager().deleteEventRequest(bp.classPrepareRequest); }
+                    catch (Throwable ignored) {}
+                    bp.classPrepareRequest = null;
+                }
+                return true;
+            } catch (Throwable t) {
+                return false;
+            }
+        }
+
         List<Location> locs = findLocations(rt, bp.methodName, bp.line);
         if (locs.isEmpty()) return false; // this class doesn't have the method/line; keep waiting
 
@@ -203,6 +238,59 @@ public class BreakpointManager {
             if (bp.classPrepareRequest == req) return bp;
         }
         return null;
+    }
+
+    /** Set an exception breakpoint. Captures use {@code e} as the root for the thrown exception. */
+    public SetResult setExceptionBreakpoint(String exceptionClass, boolean notifyCaught, boolean notifyUncaught,
+                                            List<String> captures, boolean includeProxies) {
+        ReferenceType rt = ClassResolver.pickOne(vm, exceptionClass, includeProxies);
+        if (rt == null) {
+            // Exception class not loaded yet; arm a deferred watcher.
+            return armDeferredException(exceptionClass, notifyCaught, notifyUncaught, captures, includeProxies);
+        }
+
+        ExceptionRequest req;
+        try {
+            req = vm.eventRequestManager().createExceptionRequest(rt, notifyCaught, notifyUncaught);
+            req.setSuspendPolicy(ExceptionRequest.SUSPEND_EVENT_THREAD);
+            req.enable();
+        } catch (Throwable t) {
+            return SetResult.error("failed to create exception request for " + rt.name() + ": " + t.getMessage());
+        }
+
+        String id = "bp-" + idGen.getAndIncrement();
+        Breakpoint bp = new Breakpoint(id, rt.name(), null, null, captures, includeProxies);
+        bp.resolvedClass = rt.name();
+        bp.type = "exception";
+        bp.requests.add(req);
+        bp.status = "armed";
+        bps.put(id, bp);
+
+        return SetResult.ok(id, rt.name(), null, null);
+    }
+
+    private SetResult armDeferredException(String exceptionClass, boolean notifyCaught, boolean notifyUncaught,
+                                           List<String> captures, boolean includeProxies) {
+        String id = "bp-" + idGen.getAndIncrement();
+        Breakpoint bp = new Breakpoint(id, exceptionClass, null, null, captures, includeProxies);
+        bp.resolvedClass = exceptionClass + " (pending load)";
+        bp.status = "deferred";
+        bp.type = "exception";
+        try {
+            ClassPrepareRequest cpr = vm.eventRequestManager().createClassPrepareRequest();
+            String filter = exceptionClass.contains(".") ? exceptionClass : "*." + exceptionClass;
+            cpr.addClassFilter(filter);
+            cpr.setSuspendPolicy(ClassPrepareRequest.SUSPEND_EVENT_THREAD);
+            cpr.enable();
+            bp.classPrepareRequest = cpr;
+        } catch (Throwable t) {
+            return SetResult.error("exception class not loaded and could not arm deferred watcher for '"
+                    + exceptionClass + "': " + t.getMessage());
+        }
+        bps.put(id, bp);
+        SetResult r = SetResult.ok(id, exceptionClass, null, null);
+        r.deferred = true;
+        return r;
     }
 
     public boolean remove(String id) {

@@ -9,6 +9,8 @@ public class UserService {
     private int callCount = 0;
     private String serviceName = "userService";
     private Integer boxedCount = 42;   // for boxed primitive test
+    private final int[] sampleArray = {10, 20, 30, 40, 50}; // for array.length + [var] index tests
+    private int sampleIndex = 2;
 
     /** Returns a user whose address is null — triggers null-break on user.address.id. */
     public User findById(long id) {
@@ -18,6 +20,7 @@ public class UserService {
 
     /** Breakpoint target: args[0]=User (address null), args[1]=Order (25 items). */
     public void processUser(User user, Order order) {
+        int mid = 2;  // for [var] index test (must be before callCount++ so it's visible at method entry bp)
         callCount++;
         String name = user.getName();
         int itemCount = order == null ? 0 : order.getItems().size();

@@ -3,6 +3,7 @@ package com.ylw.jdbmcp.snapshot;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.Iterator;
 import java.util.List;
 
 /**
@@ -53,6 +54,19 @@ public class HitBuffer {
             if (h.hitId == hitId) return h;
         }
         return null;
+    }
+
+    /** Remove all hits belonging to a breakpoint (called on remove_breakpoint). */
+    public synchronized int removeForBp(String breakpointId) {
+        if (breakpointId == null) return 0;
+        int removed = 0;
+        for (Iterator<Hit> it = ring.iterator(); it.hasNext(); ) {
+            if (breakpointId.equals(it.next().breakpointId)) {
+                it.remove();
+                removed++;
+            }
+        }
+        return removed;
     }
 
     public synchronized int size() {

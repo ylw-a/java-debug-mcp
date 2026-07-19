@@ -21,6 +21,8 @@ public final class Defaults {
     public static final int COLLECTION_LIMIT = 20;
     /** 单对象展开字段数上限。 */
     public static final int MAX_FIELDS = 50;
+    /** 单次 capture 渲染的 ValueNode 节点数预算（防 this/大对象爆炸）。超限截断并提示。 */
+    public static final int MAX_RENDER_NODES = 1000;
 
     // ---- Mode-B 预算（每次挂起）----
     public static final int EXPLORE_BUDGET = 5;
@@ -34,4 +36,7 @@ public final class Defaults {
     // ---- 发现 / 枚举 ----
     public static final int LIST_CLASSES_LIMIT = 100;
     public static final int MAX_FRAMES = 200;
+    /** list_hits 默认返回的 hit 条数上限（防单次返回过大）。 */
+    public static final int LIST_HITS_LIMIT = 50;
+    public static final int LIST_HITS_MAX = 200;
 }

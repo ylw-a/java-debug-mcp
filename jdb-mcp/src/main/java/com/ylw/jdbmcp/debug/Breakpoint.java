@@ -30,6 +30,10 @@ public class Breakpoint {
     /** Watcher set when the class isn't loaded yet; nulled once materialized. */
     public ClassPrepareRequest classPrepareRequest;
 
+    /** True if set as mode B (interactive: resume blocks for the next hit of this bp). One-shot:
+     *  consumed (set false) once the hit is claimed by a resume-wait; later hits degrade to mode A. */
+    public boolean modeB;
+
     // ---- per-breakpoint capture overrides (null = inherit session) ----
     public Integer bpMaxDepth;
     public Integer bpMaxStrLen;
@@ -45,7 +49,8 @@ public class Breakpoint {
                 bpMaxStrLen != null ? bpMaxStrLen : base.toStringLimit,
                 bpMaxCollSize != null ? bpMaxCollSize : base.collectionLimit,
                 base.maxFields,
-                bpSafeMode != null ? bpSafeMode : base.safeMode);
+                bpSafeMode != null ? bpSafeMode : base.safeMode,
+                base.maxRenderNodes);
     }
 
     public Breakpoint(String id, String classFqcn, String methodName, Integer line,

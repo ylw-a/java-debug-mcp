@@ -63,12 +63,12 @@ public final class ClassResolver {
         return hits.size() == 1 ? hits.get(0) : null;
     }
 
-    /** Paginated enumeration of loaded classes (for list_classes). */
+    /** Paginated enumeration of loaded classes (for list_classes). Substring match on FQCN or simple name. */
     public static EnumerateResult enumerate(VirtualMachine vm, String prefix, boolean includeProxies,
                                             int limit, int offset) {
         List<ClassCandidate> all = new ArrayList<>();
         for (ReferenceType rt : vm.allClasses()) {
-            if (prefix != null && !prefix.isBlank() && !rt.name().startsWith(prefix)) continue;
+            if (prefix != null && !prefix.isBlank() && !matches(rt.name(), prefix.trim())) continue;
             boolean proxy = ProxyFilter.isProxy(rt);
             if (proxy && !includeProxies) continue;
             boolean prepared;
@@ -80,6 +80,7 @@ public final class ClassResolver {
             all.add(new ClassCandidate(rt.name(), ClassCandidate.simpleNameOf(rt.name()),
                     proxy, rt instanceof InterfaceType, prepared));
         }
+        all.sort(java.util.Comparator.comparing(c -> c.fqcn));
         int total = all.size();
         int from = Math.min(offset, total);
         int to = Math.min(offset + limit, total);

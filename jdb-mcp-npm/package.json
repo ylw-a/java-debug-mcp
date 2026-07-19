@@ -1,0 +1,28 @@
+{
+  "name": "jdb-mcp",
+  "version": "1.0.0",
+  "description": "Java Debug MCP Server — AI-driven Java debugging via JDI. Pre-declare captures, set breakpoints, step through code, inspect exceptions. Requires JDK 17+.",
+  "keywords": ["mcp", "java", "debug", "jdi", "jdwp", "claude", "ai", "debugger"],
+  "license": "MIT",
+  "author": "ylw",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ylw/jdb-mcp"
+  },
+  "bin": {
+    "jdb-mcp": "./bin/jdb-mcp.js"
+  },
+  "files": [
+    "bin/",
+    "jars/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "os": ["darwin", "linux", "win32"],
+  "scripts": {
+    "prepare": "node -e \"const fs=require('fs');const src='../jdb-mcp/target/jdb-mcp-1.0.0.jar';const dst='jars/jdb-mcp-1.0.0.jar';if(!fs.existsSync(src)){console.error('Jar not found: '+src+'; run mvn package first');process.exit(1);}fs.copyFileSync(src,dst);console.log('Copied jar to '+dst);\""
+  }
+}

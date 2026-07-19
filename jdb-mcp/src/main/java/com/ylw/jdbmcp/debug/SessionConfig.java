@@ -28,7 +28,8 @@ public final class SessionConfig {
     public SessionConfig() {
         this.limits = new ExprCapture.Limits(
                 Defaults.PATH_DEPTH, Defaults.RENDER_DEPTH,
-                Defaults.TO_STRING_LIMIT, Defaults.COLLECTION_LIMIT, Defaults.MAX_FIELDS);
+                Defaults.TO_STRING_LIMIT, Defaults.COLLECTION_LIMIT, Defaults.MAX_FIELDS,
+                false, Defaults.MAX_RENDER_NODES);
         this.exploreBudget = Defaults.EXPLORE_BUDGET;
         this.evalBudget = Defaults.EVAL_BUDGET;
         this.stepBudget = Defaults.STEP_BUDGET;
@@ -47,8 +48,9 @@ public final class SessionConfig {
     /** 应用 start_session 的初始覆盖（null 字段保留默认）。 */
     public void applyStart(StartParams p) {
         if (p == null) return;
-        if (p.maxDepth != null || p.maxStrLen != null || p.maxCollSize != null || p.maxFields != null || p.safeMode != null) {
-            limits = buildLimits(limits, p.maxDepth, p.maxStrLen, p.maxCollSize, p.maxFields, p.safeMode);
+        if (p.maxDepth != null || p.maxStrLen != null || p.maxCollSize != null || p.maxFields != null
+                || p.safeMode != null || p.maxRenderNodes != null) {
+            limits = buildLimits(limits, p.maxDepth, p.maxStrLen, p.maxCollSize, p.maxFields, p.safeMode, p.maxRenderNodes);
         }
         if (p.exploreBudget != null) exploreBudget = p.exploreBudget;
         if (p.evalBudget != null) evalBudget = p.evalBudget;
@@ -63,16 +65,18 @@ public final class SessionConfig {
      * 降低值无提示。只传需要改的字段，其余保持。
      */
     public List<String> configure(Integer maxDepth, Integer maxStrLen, Integer maxCollSize,
-                                  Integer maxFields, Boolean safeMode, Integer exploreBudget,
-                                  Integer evalBudget, Integer stepBudget, Integer modeBTimeoutSec,
-                                  Boolean allowEval) {
+                                  Integer maxFields, Integer maxRenderNodes, Boolean safeMode,
+                                  Integer exploreBudget, Integer evalBudget, Integer stepBudget,
+                                  Integer modeBTimeoutSec, Boolean allowEval) {
         List<String> raised = new ArrayList<>();
-        if (maxDepth != null || maxStrLen != null || maxCollSize != null || maxFields != null || safeMode != null) {
-            limits = buildLimits(limits, maxDepth, maxStrLen, maxCollSize, maxFields, safeMode);
+        if (maxDepth != null || maxStrLen != null || maxCollSize != null || maxFields != null
+                || maxRenderNodes != null || safeMode != null) {
+            limits = buildLimits(limits, maxDepth, maxStrLen, maxCollSize, maxFields, safeMode, maxRenderNodes);
             if (limits.pathDepth > Defaults.PATH_DEPTH) raised.add("maxDepth=" + limits.pathDepth);
             if (limits.toStringLimit > Defaults.TO_STRING_LIMIT) raised.add("maxStrLen=" + limits.toStringLimit);
             if (limits.collectionLimit > Defaults.COLLECTION_LIMIT) raised.add("maxCollSize=" + limits.collectionLimit);
             if (limits.maxFields > Defaults.MAX_FIELDS) raised.add("maxFields=" + limits.maxFields);
+            if (limits.maxRenderNodes > Defaults.MAX_RENDER_NODES) raised.add("maxRenderNodes=" + limits.maxRenderNodes);
             if (safeMode != null && safeMode) raised.add("safeMode=true");
         }
         if (exploreBudget != null) {
@@ -102,7 +106,7 @@ public final class SessionConfig {
     private static ExprCapture.Limits buildLimits(ExprCapture.Limits old,
                                                   Integer maxDepth, Integer maxStrLen,
                                                   Integer maxCollSize, Integer maxFields,
-                                                  Boolean safeMode) {
+                                                  Boolean safeMode, Integer maxRenderNodes) {
         int depth = maxDepth != null ? maxDepth : old.pathDepth;
         return new ExprCapture.Limits(
                 depth,
@@ -110,6 +114,7 @@ public final class SessionConfig {
                 maxStrLen != null ? maxStrLen : old.toStringLimit,
                 maxCollSize != null ? maxCollSize : old.collectionLimit,
                 maxFields != null ? maxFields : old.maxFields,
-                safeMode != null ? safeMode : old.safeMode);
+                safeMode != null ? safeMode : old.safeMode,
+                maxRenderNodes != null ? maxRenderNodes : old.maxRenderNodes);
     }
 }

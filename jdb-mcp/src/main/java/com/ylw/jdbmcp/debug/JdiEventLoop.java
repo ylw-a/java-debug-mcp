@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * JDI event loop thread. Owns ALL JDI Value operations - captures and eval happen here,
@@ -26,10 +27,11 @@ import java.util.concurrent.CompletableFuture;
  * </ul>
  *
  * <p>Concurrency: the mode-B decision, suspendedHit/suspendedThread assignment, and latch
- * countDown all happen atomically under {@link #modeBLock}. The handler's
- * {@link #claimSuspendedHitOrAbandon()} is under the same lock, so the post-await claim is
- * race-free: either the event loop committed the hit (claim returns it) or it didn't (claim
- * clears the waiter and later hits degrade to mode A).
+ * countDown all happen atomically under {@link #modeBLock}. resume's {@link #waitForModeBHit}
+ * is under the same lock, so the wait is race-free: either the event loop already committed a
+ * hit (race path - bp fired before resume) and returns it immediately, or it sets the latch and
+ * awaits. modeBPending is one-shot: cleared by resume on claim/timeout, so later hits of the
+ * same bp degrade to mode A until re-armed.
  */
 public class JdiEventLoop extends Thread {
 
@@ -40,11 +42,11 @@ public class JdiEventLoop extends Thread {
     private final CommandBus commandBus;
 
     private final Object modeBLock = new Object();
-    private volatile CountDownLatch modeBLatch;
+    private volatile boolean modeBPending = false;   // set_breakpoint(mode=B) armed a wait; resume consumes it
+    private volatile CountDownLatch modeBLatch;       // set by resume while awaiting a mode-B hit
     private volatile Hit suspendedHit;
     private volatile ThreadReference suspendedThread;
     private volatile com.sun.jdi.Location suspendedLocation;
-    private volatile boolean waiterActive = false;
 
     private volatile boolean running = true;
     private static final boolean debug = false;
@@ -60,30 +62,51 @@ public class JdiEventLoop extends Thread {
         setDaemon(true);
     }
 
-    /** Arm a mode-B wait. Returns the latch the handler should await. */
-    public CountDownLatch prepareModeBWait() {
-        CountDownLatch latch = new CountDownLatch(1);
+    /**
+     * Arm a mode-B interactive wait. Called by set_breakpoint(mode=B). Non-blocking: just marks
+     * that the next mode-B breakpoint hit should be captured for interactive inspection (resume
+     * will block for it). set_breakpoint is responsible for resuming the target if needed.
+     */
+    public void armModeB() {
         synchronized (modeBLock) {
-            modeBLatch = latch;
-            suspendedHit = null;
-            suspendedThread = null;
-            waiterActive = true;
+            modeBPending = true;
         }
-        return latch;
+    }
+
+    public boolean isModeBPending() {
+        synchronized (modeBLock) { return modeBPending; }
     }
 
     /**
-     * Called by the handler after awaiting the latch. If the event loop committed a hit,
-     * returns it (the event loop is now in its command loop - the AI may explore/resume).
-     * Otherwise clears the waiter so later hits degrade to mode A and returns null (timeout).
+     * Block until a mode-B breakpoint hits, then return its suspended hit. Called by resume.
+     *
+     * <p>Race-safe: if the breakpoint already fired (before resume was called) the hit is stashed
+     * and returned immediately. The mode-B wait is one-shot: modeBPending is cleared here on claim
+     * or timeout, so subsequent hits of the same bp degrade to mode A (buffered) until the AI
+     * re-arms with another set_breakpoint(mode=B).
      */
-    public Hit claimSuspendedHitOrAbandon() {
+    public Hit waitForModeBHit(int timeoutSec) {
+        CountDownLatch latch;
         synchronized (modeBLock) {
             if (suspendedHit != null) {
+                // Race: bp fired before resume was called; event loop already in its command loop.
+                modeBPending = false;
                 return suspendedHit;
             }
-            waiterActive = false;
-            return null;
+            latch = new CountDownLatch(1);
+            modeBLatch = latch;
+        }
+        boolean got;
+        try {
+            got = latch.await(timeoutSec, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            got = false;
+        }
+        synchronized (modeBLock) {
+            modeBLatch = null;
+            modeBPending = false; // claim (hit) or cancel (timeout)
+            return suspendedHit;  // null on timeout
         }
     }
 
@@ -139,10 +162,11 @@ public class JdiEventLoop extends Thread {
         Location loc = be.location();
 
         // Atomically decide mode B vs A and, if mode B, commit the suspended hit.
+        // modeB = this bp was set as mode-B AND a mode-B wait is pending (set_breakpoint mode=B).
         boolean modeB;
         Hit stored;
         synchronized (modeBLock) {
-            modeB = waiterActive;
+            modeB = bp != null && bp.modeB && modeBPending;
             suspendedLocation = loc;
             String mode = modeB ? "B" : "A";
             Hit template = new Hit(0, ordinal,
@@ -156,6 +180,10 @@ public class JdiEventLoop extends Thread {
                     snapshot);
             stored = hits.add(template);
             if (modeB) {
+                // One-shot: this bp's interactive chance is consumed; modeBPending is cleared by
+                // resume when it claims the hit (so a bp that fires before resume still resolves
+                // to a wait, not a continue).
+                if (bp != null) bp.modeB = false;
                 suspendedThread = thread;
                 suspendedHit = stored;
                 CountDownLatch l = modeBLatch;
@@ -183,7 +211,7 @@ public class JdiEventLoop extends Thread {
 
         boolean modeB;
         synchronized (modeBLock) {
-            modeB = waiterActive;
+            modeB = bp != null && bp.modeB && modeBPending;
             suspendedLocation = loc;
             String mode = modeB ? "B" : "A";
             Hit template = new Hit(0, ordinal,
@@ -197,6 +225,7 @@ public class JdiEventLoop extends Thread {
                     snapshot);
             hits.add(template);
             if (modeB) {
+                if (bp != null) bp.modeB = false;
                 suspendedThread = thread;
                 suspendedHit = template;
                 CountDownLatch l = modeBLatch;
@@ -276,7 +305,6 @@ public class JdiEventLoop extends Thread {
                     synchronized (modeBLock) {
                         suspendedThread = null;
                         suspendedHit = null;
-                        waiterActive = false;
                     }
                     rc.future().complete(Map.of("resumed", true, "thread", thread.name()));
                     return;
@@ -386,7 +414,6 @@ public class JdiEventLoop extends Thread {
             synchronized (modeBLock) {
                 suspendedThread = null;
                 suspendedHit = null;
-                waiterActive = false;
             }
         }
     }

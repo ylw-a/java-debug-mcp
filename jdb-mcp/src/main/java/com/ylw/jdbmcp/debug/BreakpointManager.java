@@ -296,14 +296,35 @@ public class BreakpointManager {
     public boolean remove(String id) {
         Breakpoint bp = bps.remove(id);
         if (bp == null) return false;
+        deleteRequests(bp);
+        return true;
+    }
+
+    /** Delete all JDI requests (breakpoint + class-prepare) for one bp. */
+    private void deleteRequests(Breakpoint bp) {
         try {
             if (!bp.requests.isEmpty()) vm.eventRequestManager().deleteEventRequests(bp.requests);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) {}
         if (bp.classPrepareRequest != null) {
             try { vm.eventRequestManager().deleteEventRequest(bp.classPrepareRequest); }
             catch (Throwable ignored) {}
         }
+        bp.requests.clear();
+        bp.classPrepareRequest = null;
+    }
+
+    /** Delete ALL JDI requests for ALL breakpoints (called on stop_session before dispose). */
+    public void deleteAllRequests() {
+        for (Breakpoint bp : bps.values()) {
+            deleteRequests(bp);
+        }
+    }
+
+    /** Mark a breakpoint as mode B (interactive). Returns false if no such bp. */
+    public boolean markModeB(String id) {
+        Breakpoint bp = bps.get(id);
+        if (bp == null) return false;
+        bp.modeB = true;
         return true;
     }
 

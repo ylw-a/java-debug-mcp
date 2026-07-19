@@ -151,17 +151,23 @@ class DebugSessionIT {
     }
 
     @Test
-    void modeB_blocksReturnsHitAndExploreResume() throws Exception {
+    void modeB_armsNonBlockingResumeBlocksAndExplore() throws Exception {
         Map<String, Object> start = session.start(startParams);
         assertNull(start.get("error"), "start failed: " + start);
 
         List<String> captures = List.of("args[0].name", "this.serviceName");
         Map<String, Object> bp = session.setBreakpoint("UserService", "processUser", null, captures, "B", false, 20, null, null, null, null);
         assertNull(bp.get("error"), "set_breakpoint mode B failed: " + bp);
-        assertEquals("hit", bp.get("status"), "mode B should return hit: " + bp);
-        assertEquals(Boolean.TRUE, bp.get("jvmSuspended"));
+        assertTrue("armed".equals(bp.get("status")) || "armed_deferred".equals(bp.get("status")),
+                "mode B set_breakpoint must be NON-BLOCKING (status=armed/armed_deferred): " + bp);
 
-        Hit hit = (Hit) bp.get("hit");
+        // resume blocks until the hit
+        Map<String, Object> r = session.resume();
+        assertNull(r.get("error"), "resume (wait) failed: " + r);
+        assertEquals("hit", r.get("status"), "resume should return the hit: " + r);
+        assertEquals(Boolean.TRUE, r.get("jvmSuspended"));
+
+        Hit hit = (Hit) r.get("hit");
         assertNotNull(hit);
         assertEquals("B", hit.mode);
 
@@ -173,11 +179,11 @@ class DebugSessionIT {
         assertEquals("address", expResult.nullBreakAt);
         System.out.println("[test] explore result: " + exp);
 
-        // resume
-        Map<String, Object> r = session.resume();
-        assertNull(r.get("error"), "resume failed: " + r);
-        assertEquals("resumed", r.get("status"));
-        System.out.println("[test] mode B + explore + resume passed");
+        // resume (continue) - non-blocking now (one-shot)
+        Map<String, Object> r2 = session.resume();
+        assertNull(r2.get("error"), "resume (continue) failed: " + r2);
+        assertEquals("resumed", r2.get("status"));
+        System.out.println("[test] mode B non-blocking + resume + explore + resume passed");
     }
 
     @Test
@@ -237,6 +243,12 @@ class DebugSessionIT {
         Map<String, Object> bp = session.setBreakpoint("UserService", "processUser", null,
                 List.of("this.serviceName"), "B", false, 20, null, null, null, null);
         assertNull(bp.get("error"), "mode B failed: " + bp);
+        assertTrue("armed".equals(bp.get("status")) || "armed_deferred".equals(bp.get("status")),
+                "mode B should arm non-blocking: " + bp);
+
+        Map<String, Object> r = session.resume();
+        assertNull(r.get("error"), "resume failed: " + r);
+        assertEquals("hit", r.get("status"));
 
         // Top frame should be processUser
         Map<String, Object> frames = session.getFrames(null);
@@ -259,6 +271,12 @@ class DebugSessionIT {
         Map<String, Object> bp = session.setBreakpoint("UserService", "processUser", null,
                 List.of("this.serviceName"), "B", false, 20, null, null, null, null);
         assertNull(bp.get("error"), "mode B failed: " + bp);
+        assertTrue("armed".equals(bp.get("status")) || "armed_deferred".equals(bp.get("status")),
+                "mode B should arm non-blocking: " + bp);
+
+        Map<String, Object> r = session.resume();
+        assertNull(r.get("error"), "resume failed: " + r);
+        assertEquals("hit", r.get("status"));
 
         Map<String, Object> vars = session.getVariables(0, null);
         assertNull(vars.get("error"), "get_variables failed: " + vars);
@@ -283,8 +301,13 @@ class DebugSessionIT {
         Map<String, Object> bp = session.setBreakpoint("UserService", "processUser", null,
                 List.of("this.serviceName"), "B", false, 20, null, null, null, null);
         assertNull(bp.get("error"), "mode B failed: " + bp);
+        assertTrue("armed".equals(bp.get("status")) || "armed_deferred".equals(bp.get("status")),
+                "mode B should arm non-blocking: " + bp);
 
-        Hit hit = (Hit) bp.get("hit");
+        Map<String, Object> r = session.resume();
+        assertNull(r.get("error"), "resume failed: " + r);
+        assertEquals("hit", r.get("status"));
+        Hit hit = (Hit) r.get("hit");
         int originalLine = hit.line;
 
         Map<String, Object> step = session.step("over");
@@ -354,7 +377,7 @@ class DebugSessionIT {
         assertNull(start.get("error"), "start failed: " + start);
 
         // Raise explore budget
-        Map<String, Object> cfg = session.configure(null, null, null, null, null,
+        Map<String, Object> cfg = session.configure(null, null, null, null, null, null,
                 10, null, null, null, null);
         assertNull(cfg.get("error"), "configure failed: " + cfg);
         @SuppressWarnings("unchecked")
@@ -389,13 +412,144 @@ class DebugSessionIT {
         // The test environment (surefire fork + child process) may obscure args.
     }
 
+    @Test
+    void removeBreakpoint_clearsHitsAndStatus() throws Exception {
+        Map<String, Object> start = session.start(startParams);
+        assertNull(start.get("error"), "start failed: " + start);
+
+        Map<String, Object> bp = session.setBreakpoint("UserService", "processUser", null,
+                List.of("this.serviceName"), "A", false, null, null, null, null, null);
+        assertNull(bp.get("error"), "bp failed: " + bp);
+        String bpId = (String) bp.get("breakpointId");
+        List<Hit> hits = pollHits(session, bpId, 1, 15);
+        assertFalse(hits.isEmpty(), "expected at least 1 hit before remove");
+
+        Map<String, Object> st = session.sessionStatus();
+        assertTrue(((Number) st.get("hitBufferSize")).intValue() > 0, "hitBufferSize>0 before remove: " + st);
+
+        Map<String, Object> rem = session.removeBreakpoint(bpId);
+        assertNull(rem.get("error"), "remove failed: " + rem);
+        assertEquals("removed", rem.get("status"));
+        assertTrue(((Number) rem.get("clearedHits")).intValue() > 0, "should clear hits: " + rem);
+
+        @SuppressWarnings("unchecked")
+        List<Hit> after = (List<Hit>) session.listHits(bpId, null, null, null, null).get("hits");
+        assertTrue(after == null || after.isEmpty(), "hits should be cleared after remove: " + after);
+
+        Map<String, Object> st2 = session.sessionStatus();
+        assertEquals(0, ((Number) st2.get("hitBufferSize")).intValue(),
+                "hitBufferSize should be 0 (consistent with list_hits) after remove: " + st2);
+        System.out.println("[test] remove_breakpoint cleared " + rem.get("clearedHits") + " hits; status hitBufferSize=" + st2.get("hitBufferSize"));
+    }
+
+    @Test
+    void listClasses_substringFilter() throws Exception {
+        Map<String, Object> start = session.start(startParams);
+        assertNull(start.get("error"), "start failed: " + start);
+        Map<String, Object> bp = session.setBreakpoint("UserService", "processUser", null,
+                List.of("this.serviceName"), "A", false, null, null, null, null, null);
+        pollHits(session, (String) bp.get("breakpointId"), 1, 10);
+
+        Map<String, Object> lc = session.listClasses("UserService", false, 100, 0);
+        assertNull(lc.get("error"), "list_classes failed: " + lc);
+        @SuppressWarnings("unchecked")
+        List<?> cands = (List<?>) lc.get("candidates");
+        assertNotNull(cands);
+        assertTrue(cands.size() > 0, "filter 'UserService' should match at least UserService: " + cands);
+        assertTrue(cands.stream().allMatch(c -> c.toString().toLowerCase().contains("userservice")),
+                "all results must match the substring filter (no garbage): " + cands);
+        System.out.println("[test] list_classes filter 'UserService' -> " + cands.size() + " matches");
+    }
+
+    @Test
+    void shallowBareRoot_rendersDirectFieldsOnly() throws Exception {
+        Map<String, Object> start = session.start(startParams);
+        assertNull(start.get("error"), "start failed: " + start);
+        // args[1] is an Order (plain object) with an `items` List field. Bare root -> shallow:
+        // direct fields shown, but the items List must NOT expand (toString summary).
+        List<String> captures = List.of("args[1]");
+        Map<String, Object> bp = session.setBreakpoint("UserService", "processUser", null,
+                captures, "A", false, null, null, null, null, null);
+        assertNull(bp.get("error"), "bp failed: " + bp);
+        List<Hit> hits = pollHits(session, (String) bp.get("breakpointId"), 1, 15);
+        Hit h0 = hits.get(0);
+        CaptureResult cr = h0.captures.get(0);
+        assertEquals("ok", cr.status, "args[1] should resolve: " + cr.status);
+        assertEquals("object", cr.value.kind, "bare Order should render as object");
+        assertNotNull(cr.value.fields.get("id"), "should have id field");
+        ValueNode itemsNode = cr.value.fields.get("items");
+        assertNotNull(itemsNode, "should have items field");
+        assertNotEquals("array", itemsNode.kind,
+                "shallow render: items List must NOT expand (got kind=" + itemsNode.kind + ")");
+        System.out.println("[test] shallow args[1]: id=" + cr.value.fields.get("id").value
+                + " items.kind=" + itemsNode.kind + " (not array = shallow OK)");
+    }
+
+    @Test
+    void renderBudget_truncatesOversizedCapture() throws Exception {
+        startParams.maxRenderNodes = 3;
+        Map<String, Object> start = session.start(startParams);
+        assertNull(start.get("error"), "start failed: " + start);
+        // args[1].items is a 25-element List; with a 3-node budget it must truncate early.
+        List<String> captures = List.of("args[1].items");
+        Map<String, Object> bp = session.setBreakpoint("UserService", "processUser", null,
+                captures, "A", false, null, null, null, null, null);
+        assertNull(bp.get("error"), "bp failed: " + bp);
+        List<Hit> hits = pollHits(session, (String) bp.get("breakpointId"), 1, 15);
+        Hit h0 = hits.get(0);
+        CaptureResult cr = h0.captures.get(0);
+        assertEquals("ok", cr.status);
+        assertEquals("array", cr.value.kind);
+        assertEquals(Boolean.TRUE, cr.value.truncated, "low render budget should truncate: " + cr.value.truncated);
+        assertTrue(cr.value.elements.size() < 20, "budget should limit elements: got " + cr.value.elements.size());
+        System.out.println("[test] render budget: elements=" + cr.value.elements.size() + " truncated=" + cr.value.truncated);
+    }
+
+    @Test
+    void arrayLength_capturesLength() throws Exception {
+        Map<String, Object> start = session.start(startParams);
+        assertNull(start.get("error"), "start failed: " + start);
+        // sampleArray is int[]{10, 20, 30, 40, 50}
+        List<String> captures = List.of("this.sampleArray.length");
+        Map<String, Object> bp = session.setBreakpoint("UserService", "processUser", null,
+                captures, "A", false, null, null, null, null, null);
+        assertNull(bp.get("error"), "bp failed: " + bp);
+        List<Hit> hits = pollHits(session, (String) bp.get("breakpointId"), 1, 15);
+        Hit h0 = hits.get(0);
+        CaptureResult cr = h0.captures.get(0);
+        assertEquals("ok", cr.status, "array.length should resolve: " + cr.status);
+        assertEquals("primitive", cr.value.kind, "length should be primitive, got: " + cr.value.kind);
+        assertEquals(5, cr.value.value, "sampleArray.length should be 5, got: " + cr.value.value);
+        System.out.println("[test] array.length=" + cr.value.value);
+    }
+
+    @Test
+    void varIndex_resolvesFromLocalVariable() throws Exception {
+        Map<String, Object> start = session.start(startParams);
+        assertNull(start.get("error"), "start failed: " + start);
+        // mid=2 declared at line 23; break at line 25 (after mid is in scope).
+        // sampleArray[mid] = sampleArray[2] = 30
+        List<String> captures = List.of("this.sampleArray[mid]");
+        Map<String, Object> bp = session.setBreakpoint("UserService", "processUser", 25,
+                captures, "A", false, null, null, null, null, null);
+        assertNull(bp.get("error"), "bp failed: " + bp);
+        List<Hit> hits = pollHits(session, (String) bp.get("breakpointId"), 1, 15);
+        Hit h0 = hits.get(0);
+        CaptureResult cr = h0.captures.get(0);
+        assertEquals("ok", cr.status, "[mid] should resolve: " + cr.status
+                + (cr.error != null ? " " + cr.error : ""));
+        assertEquals("primitive", cr.value.kind, "array element should be primitive, got: " + cr.value.kind);
+        assertEquals(30, cr.value.value, "sampleArray[2] should be 30, got: " + cr.value.value);
+        System.out.println("[test] sampleArray[mid]=" + cr.value.value);
+    }
+
     // ---- helpers ----
     private List<Hit> pollHits(DebugSession s, String bpId, int expected, int timeoutSec) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutSec * 1000L;
         List<Hit> hits = new ArrayList<>();
         while (System.currentTimeMillis() < deadline) {
             @SuppressWarnings("unchecked")
-            List<Hit> cur = (List<Hit>) s.listHits(bpId, null, null).get("hits");
+            List<Hit> cur = (List<Hit>) s.listHits(bpId, null, null, null, null).get("hits");
             if (cur != null && cur.size() >= expected) {
                 hits = cur;
                 break;
@@ -404,7 +558,7 @@ class DebugSessionIT {
         }
         if (hits.isEmpty()) {
             @SuppressWarnings("unchecked")
-            List<Hit> cur = (List<Hit>) s.listHits(bpId, null, null).get("hits");
+            List<Hit> cur = (List<Hit>) s.listHits(bpId, null, null, null, null).get("hits");
             hits = cur == null ? List.of() : cur;
         }
         return hits;

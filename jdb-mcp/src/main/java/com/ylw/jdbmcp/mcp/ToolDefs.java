@@ -39,9 +39,12 @@ public final class ToolDefs {
                     + "   - Mode A (default, non-blocking): the bp fires asynchronously in the background. "
                     + "Call list_hits to poll snapshots - it may return 0 until the target reaches the code; "
                     + "retry after a moment. Hits accumulate (per-breakpoint ordinals, 1-based).\n"
-                    + "   - Mode B (blocking): blocks until the hit, then the JVM STAYS SUSPENDED. Inspect via "
-                    + "explore (read-path, budgeted), get_frames/get_variables (full stack + locals), step (over/out/into), "
-                    + "or eval (side-effects, off by default), then call resume.\n"
+                    + "   - Mode B (interactive): set_breakpoint(mode=B) arms NON-BLOCKING and returns immediately. "
+                    + "Trigger your request (curl/manual) NOW, then call resume to BLOCK until the hit - the JVM "
+                    + "suspends. Inspect via explore (read-path, budgeted), get_frames/get_variables (full stack + "
+                    + "locals), step (over/out/into), or eval (side-effects, off by default), then call resume AGAIN "
+                    + "to continue. One interactive hit per set_breakpoint(mode=B); later hits degrade to mode A "
+                    + "(buffered) - re-arm mode B to inspect again. set_breakpoint never blocks; resume does the waiting.\n"
                     + "4. stop_session when done.\n"
                     + "\n"
                     + "EXPRESSION GRAMMAR (for captures and explore):\n"
@@ -54,7 +57,10 @@ public final class ToolDefs {
                     + "The root is one of: this, args[N], or a local-variable name.\n"
                     + "If an intermediate segment is null you get status=null_break naming WHERE it broke "
                     + "(e.g. user.address.id with address=null -> null_break at 'address') - far more useful than a bare null.\n"
-                    + "Limits: path depth 5, toString 500 chars, collection/array expanded to first 20 elements. "
+                    + "Limits: path depth 5, toString 500 chars, collection/array expanded to first 20 elements, "
+                    + "max 50 fields per object. Bare `this` (and bare object roots) render SHALLOW - direct fields "
+                    + "only, nested objects shown as toString - so `this` never explodes. A per-capture node budget "
+                    + "(default 1000) truncates any oversized render with a hint to narrow the path. "
                     + "These are conservative DEFAULTS (the recommended starting point, not a ceiling). If a capture "
                     + "returns depth_limit or truncation AND you have a concrete need, call configure to raise the "
                     + "specific limit - raises are logged and flagged. Lowering is always safe.\n"
@@ -102,6 +108,7 @@ public final class ToolDefs {
                         + "\"maxStrLen\":{\"type\":\"integer\",\"description\":\"Max toString/string chars (default 500)\"},"
                         + "\"maxCollSize\":{\"type\":\"integer\",\"description\":\"Max collection/array elements (default 20)\"},"
                         + "\"maxFields\":{\"type\":\"integer\",\"description\":\"Max object fields (default 50)\"},"
+                        + "\"maxRenderNodes\":{\"type\":\"integer\",\"description\":\"Max ValueNode nodes per capture (explosion guard, default 1000)\"},"
                         + "\"exploreBudget\":{\"type\":\"integer\",\"description\":\"Explore budget per mode-B suspend (default 5)\"},"
                         + "\"evalBudget\":{\"type\":\"integer\",\"description\":\"Eval budget per mode-B suspend (default 2)\"},"
                         + "\"stepBudget\":{\"type\":\"integer\",\"description\":\"Step budget per mode-B suspend (default 5)\"},"
@@ -124,6 +131,7 @@ public final class ToolDefs {
                         + "\"maxStrLen\":{\"type\":\"integer\",\"description\":\"Max toString/string chars\"},"
                         + "\"maxCollSize\":{\"type\":\"integer\",\"description\":\"Max collection elements\"},"
                         + "\"maxFields\":{\"type\":\"integer\",\"description\":\"Max object fields\"},"
+                        + "\"maxRenderNodes\":{\"type\":\"integer\",\"description\":\"Max ValueNode nodes per capture (explosion guard, default 1000)\"},"
                         + "\"safeMode\":{\"type\":\"boolean\",\"description\":\"Safe mode: no method invocation (getters, toString, List size)\"},"
                         + "\"exploreBudget\":{\"type\":\"integer\",\"description\":\"Explore budget per mode-B suspend\"},"
                         + "\"evalBudget\":{\"type\":\"integer\",\"description\":\"Eval budget per mode-B suspend\"},"
@@ -133,7 +141,7 @@ public final class ToolDefs {
                         + "\"additionalProperties\":false}",
                 (ex, a) -> ToolResponses.from(session.configure(
                         intArg(a, "maxDepth"), intArg(a, "maxStrLen"), intArg(a, "maxCollSize"),
-                        intArg(a, "maxFields"), boolArg(a, "safeMode"),
+                        intArg(a, "maxFields"), intArg(a, "maxRenderNodes"), boolArg(a, "safeMode"),
                         intArg(a, "exploreBudget"), intArg(a, "evalBudget"),
                         intArg(a, "stepBudget"), intArg(a, "modeBTimeoutSec"), boolArg(a, "allowEval")))));
 
@@ -167,20 +175,23 @@ public final class ToolDefs {
                         + "\"pattern\":{\"type\":\"string\",\"description\":\"fuzzy/short class name, e.g. UserService\"},"
                         + "\"include_proxies\":{\"type\":\"boolean\",\"default\":false}},"
                         + "\"required\":[\"pattern\"],\"additionalProperties\":false}",
-                (ex, a) -> ToolResponses.from(session.resolveClass(str(a, "pattern"), bool(a, "include_proxies", false)))));
+                (ex, a) -> ToolResponses.from(session.resolveClass(strAny(a, "pattern", "class", "name"), bool(a, "include_proxies", false)))));
 
         tools.add(tool("list_classes",
                 "Paginated enumeration of loaded classes (for orientation, not resolution). "
                         + "Use resolve_class to confirm a specific class name before set_breakpoint; "
-                        + "use list_classes to browse what's loaded. Default limit 100, max 500.",
+                        + "use list_classes to browse what's loaded. The filter matches by substring "
+                        + "against both the FQCN and the simple class name (e.g. 'ProgramServiceImpl' "
+                        + "finds com.example.ProgramServiceImplImpl). Default limit 100, max 500. "
+                        + "(filter param also accepts 'prefix' or 'pattern').",
                 "{\"type\":\"object\",\"properties\":{"
-                        + "\"prefix\":{\"type\":\"string\",\"description\":\"Optional package prefix filter, e.g. com.example\"},"
+                        + "\"prefix\":{\"type\":\"string\",\"description\":\"Substring filter on class name (FQCN or simple name), e.g. ProgramServiceImpl or com.example\"},"
                         + "\"include_proxies\":{\"type\":\"boolean\",\"default\":false},"
                         + "\"limit\":{\"type\":\"integer\",\"description\":\"Page size (default 100, max 500)\"},"
                         + "\"offset\":{\"type\":\"integer\",\"description\":\"Pagination offset (default 0)\"}},"
                         + "\"additionalProperties\":false}",
-                (ex, a) -> ToolResponses.from(session.listClasses(str(a, "prefix"), bool(a, "include_proxies", false),
-                        intArg(a, "limit"), intArg(a, "offset")))));
+                (ex, a) -> ToolResponses.from(session.listClasses(strAny(a, "prefix", "filter", "pattern", "class"),
+                        bool(a, "include_proxies", false), intArg(a, "limit"), intArg(a, "offset")))));
 
         tools.add(tool("set_breakpoint",
                 "Step 2 of the debug workflow. Set a breakpoint and PRE-DECLARE the data to capture (see the "
@@ -190,8 +201,10 @@ public final class ToolDefs {
                         + " - mode A (default): status=armed (or armed_deferred if the class isn't loaded yet - "
                         + "normal, fires when it loads). Non-blocking; poll list_hits for snapshots (may be 0 until "
                         + "the target reaches the code - retry).\n"
-                        + " - mode B: BLOCKS until the hit (status=hit), JVM stays suspended; then explore/eval, "
-                        + "then resume. Prefer A unless you must inspect live state.\n"
+                        + " - mode B: NON-BLOCKING. Arms and returns immediately (status=armed). Trigger your request "
+                        + "(curl/manual) NOW, then call resume to BLOCK until the hit (status=hit, JVM suspended); "
+                        + "inspect via explore/get_variables/step, then resume again to continue. One interactive hit "
+                        + "per set_breakpoint(mode=B); later hits degrade to mode A (buffered) - re-arm to inspect again.\n"
                         + ANTI_ADDICTION,
                 "{\"type\":\"object\",\"properties\":{"
                         + "\"class\":{\"type\":\"string\",\"description\":\"class name (short/fuzzy or fqcn)\"},"
@@ -217,7 +230,8 @@ public final class ToolDefs {
         tools.add(tool("set_exception_breakpoint",
                 "Set a breakpoint that fires when a specific exception is thrown (including subclasses). "
                         + "Captures use 'e' as the root to access the thrown exception (e.g. e.getMessage(), "
-                        + "e.getCause().message, e.reason). Works with both mode A and B. "
+                        + "e.getCause().message, e.reason). Mode A is non-blocking (poll list_hits); mode B is "
+                        + "NON-BLOCKING to arm - trigger your request then call resume to block until the hit. "
                         + "The exception class is resolved via fuzzy matching (e.g. 'NullPointerException' or 'NPE'). "
                         + ANTI_ADDICTION,
                 "{\"type\":\"object\",\"properties\":{"
@@ -236,26 +250,38 @@ public final class ToolDefs {
                         bool(a, "include_proxies", false), intArg(a, "timeout")))));
 
         tools.add(tool("list_hits",
-                "Retrieve captured snapshots for a breakpoint (the mode-A retrieval step), optionally limited to an "
-                        + "ordinal range (e.g. from_hit=2, to_hit=4). Each hit has hit_id, breakpoint_id, class, method, "
-                        + "line, thread, and the pre-declared captures with their status (ok / null_break / not_found / error). "
-                        + "If count is 0 the breakpoint hasn't fired yet - wait and retry.",
+                "Retrieve captured snapshots for a breakpoint, optionally limited to an ordinal range "
+                        + "(from_hit..to_hit, 1-based per-breakpoint ordinals, inclusive). Each hit has hit_id, "
+                        + "breakpoint_id, class, method, line, thread, and the pre-declared captures with their "
+                        + "status (ok / null_break / not_found / error). Default returns at most the 50 most recent "
+                        + "hits; pass limit (max 200) to change. Pass compact=true to omit capture value trees (just "
+                        + "expr+status) for a fast scan, then re-call with from_hit/to_hit for a specific hit's full values. "
+                        + "If count is 0 the breakpoint hasn't fired yet - wait and retry. "
+                        + "(breakpoint_id also accepts 'breakpointId' or 'id'; from_hit/to_hit accept 'from'/'to'.)",
                 "{\"type\":\"object\",\"properties\":{"
                         + "\"breakpoint_id\":{\"type\":\"string\"},"
                         + "\"from_hit\":{\"type\":\"integer\",\"description\":\"1-based per-breakpoint ordinal (inclusive)\"},"
-                        + "\"to_hit\":{\"type\":\"integer\",\"description\":\"1-based per-breakpoint ordinal (inclusive)\"}},"
+                        + "\"to_hit\":{\"type\":\"integer\",\"description\":\"1-based per-breakpoint ordinal (inclusive)\"},"
+                        + "\"limit\":{\"type\":\"integer\",\"description\":\"Max hits to return (default 50, max 200)\"},"
+                        + "\"compact\":{\"type\":\"boolean\",\"description\":\"Omit capture value trees (expr+status only)\"}},"
                         + "\"additionalProperties\":false}",
-                (ex, a) -> ToolResponses.from(session.listHits(str(a, "breakpoint_id"), intArg(a, "from_hit"), intArg(a, "to_hit")))));
+                (ex, a) -> ToolResponses.from(session.listHits(strAny(a, "breakpoint_id", "breakpointId", "id"),
+                        intAny(a, "from_hit", "from"), intAny(a, "to_hit", "to"),
+                        intArg(a, "limit"), boolArg(a, "compact")))));
 
         tools.add(tool("remove_breakpoint",
-                "Disable and remove a breakpoint.",
+                "Disable and remove a breakpoint. Also clears that breakpoint's captured hits from the "
+                        + "buffer (call list_hits first if you need the history). "
+                        + "(breakpoint_id also accepts 'breakpointId' or 'id'.)",
                 "{\"type\":\"object\",\"properties\":{\"breakpoint_id\":{\"type\":\"string\"}},"
                         + "\"required\":[\"breakpoint_id\"],\"additionalProperties\":false}",
-                (ex, a) -> ToolResponses.from(session.removeBreakpoint(str(a, "breakpoint_id")))));
+                (ex, a) -> ToolResponses.from(session.removeBreakpoint(strAny(a, "breakpoint_id", "breakpointId", "id")))));
 
         tools.add(tool("resume",
-                "Resume the target JVM after a mode-B hit (which leaves it suspended). Required before setting further "
-                        + "breakpoints or letting the program proceed.",
+                "Dual purpose. (1) After set_breakpoint(mode=B): BLOCKS until the breakpoint hits and returns "
+                        + "the hit (status=hit, JVM suspended for inspection). (2) After inspecting a mode-B hit: "
+                        + "resumes the JVM and continues (status=resumed, non-blocking; later hits of the same bp "
+                        + "go to the buffer - re-arm mode B to inspect again).",
                 "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
                 (ex, a) -> ToolResponses.from(session.resume())));
 
@@ -325,6 +351,10 @@ public final class ToolDefs {
     }
 
     // ---- arg extractors ----
+    // All lookups are tolerant of snake_case vs camelCase and common semantic aliases, because
+    // models frequently pass the camelCase they saw in a response (e.g. breakpointId) back as an
+    // input arg, or guess 'class'/'filter' instead of the documented 'pattern'/'prefix'.
+
     private static StartParams startParams(Map<String, Object> a) {
         StartParams p = new StartParams();
         p.jar = str(a, "jar");
@@ -332,9 +362,9 @@ public final class ToolDefs {
         p.classpath = strList(a, "classpath");
         p.jvmArgs = strList(a, "jvmArgs");
         p.args = strList(a, "args");
-        p.workingDir = str(a, "workingDir");
+        p.workingDir = strAny(a, "workingDir", "working_dir", "cwd");
         p.suspend = bool(a, "suspend", true);
-        p.jdkPath = str(a, "jdkPath");
+        p.jdkPath = strAny(a, "jdkPath", "jdk_path", "javaHome", "java_home");
         Map<String, Object> attach = obj(a, "attach");
         if (attach != null) {
             p.attachHost = str(attach, "host");
@@ -344,6 +374,7 @@ public final class ToolDefs {
         p.maxStrLen = intArg(a, "maxStrLen");
         p.maxCollSize = intArg(a, "maxCollSize");
         p.maxFields = intArg(a, "maxFields");
+        p.maxRenderNodes = intAny(a, "maxRenderNodes", "max_render_nodes");
         p.exploreBudget = intArg(a, "exploreBudget");
         p.evalBudget = intArg(a, "evalBudget");
         p.stepBudget = intArg(a, "stepBudget");
@@ -353,23 +384,59 @@ public final class ToolDefs {
         return p;
     }
 
+    /** Convert snake_case -> camelCase (e.g. breakpoint_id -> breakpointId). */
+    private static String camel(String snake) {
+        StringBuilder sb = new StringBuilder(snake.length());
+        boolean upper = false;
+        for (int i = 0; i < snake.length(); i++) {
+            char c = snake.charAt(i);
+            if (c == '_' || c == '-') { upper = true; continue; }
+            sb.append(upper ? Character.toUpperCase(c) : c);
+            upper = false;
+        }
+        return sb.toString();
+    }
+
     private static String str(Map<String, Object> a, String k) {
         if (a == null) return null;
         Object v = a.get(k);
+        if (v == null) v = a.get(camel(k));
         return v == null ? null : v.toString();
+    }
+
+    /** Try several keys in order (semantic aliases, e.g. "pattern", "class", "name"). */
+    private static String strAny(Map<String, Object> a, String... keys) {
+        if (a == null) return null;
+        for (String k : keys) {
+            Object v = a.get(k);
+            if (v == null) v = a.get(camel(k));
+            if (v != null) return v.toString();
+        }
+        return null;
     }
 
     private static Integer intArg(Map<String, Object> a, String k) {
         if (a == null) return null;
         Object v = a.get(k);
+        if (v == null) v = a.get(camel(k));
         if (v == null) return null;
         if (v instanceof Number n) return n.intValue();
         try { return Integer.parseInt(v.toString()); } catch (Exception e) { return null; }
     }
 
+    private static Integer intAny(Map<String, Object> a, String... keys) {
+        if (a == null) return null;
+        for (String k : keys) {
+            Integer v = intArg(a, k);
+            if (v != null) return v;
+        }
+        return null;
+    }
+
     private static boolean bool(Map<String, Object> a, String k, boolean def) {
         if (a == null) return def;
         Object v = a.get(k);
+        if (v == null) v = a.get(camel(k));
         if (v == null) return def;
         if (v instanceof Boolean b) return b;
         return Boolean.parseBoolean(v.toString());
@@ -378,6 +445,7 @@ public final class ToolDefs {
     private static Boolean boolArg(Map<String, Object> a, String k) {
         if (a == null) return null;
         Object v = a.get(k);
+        if (v == null) v = a.get(camel(k));
         if (v == null) return null;
         if (v instanceof Boolean b) return b;
         return Boolean.parseBoolean(v.toString());
@@ -387,6 +455,7 @@ public final class ToolDefs {
     private static List<String> strList(Map<String, Object> a, String k) {
         if (a == null) return null;
         Object v = a.get(k);
+        if (v == null) v = a.get(camel(k));
         if (v == null) return null;
         if (v instanceof List<?> l) {
             List<String> out = new ArrayList<>();
@@ -400,6 +469,7 @@ public final class ToolDefs {
     private static Map<String, Object> obj(Map<String, Object> a, String k) {
         if (a == null) return null;
         Object v = a.get(k);
+        if (v == null) v = a.get(camel(k));
         return v instanceof Map<?, ?> ? (Map<String, Object>) v : null;
     }
 }

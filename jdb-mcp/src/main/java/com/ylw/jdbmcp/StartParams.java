@@ -40,6 +40,8 @@ public final class StartParams {
     public Integer maxStrLen;
     public Integer maxCollSize;
     public Integer maxFields;
+    /** 单次 capture 渲染节点预算（防大对象爆炸）。 */
+    public Integer maxRenderNodes;
     public Integer exploreBudget;
     public Integer evalBudget;
     public Integer stepBudget;

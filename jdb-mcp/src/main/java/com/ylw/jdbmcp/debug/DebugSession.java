@@ -12,7 +12,6 @@ import com.ylw.jdbmcp.snapshot.HitBuffer;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -112,6 +111,9 @@ public class DebugSession {
         if (!attached) {
             return err("not attached");
         }
+        // Explicitly delete all JDI event requests from the target VM before dispose, so a
+        // subsequent re-attach to the same JVM doesn't inherit orphaned breakpoints.
+        try { bpm.deleteAllRequests(); } catch (Throwable ignored) {}
         try {
             eventLoop.shutdown();
         } catch (Throwable ignored) {
@@ -132,6 +134,7 @@ public class DebugSession {
         exploreUsed = 0;
         evalUsed = 0;
         stepUsed = 0;
+        debugActions = 0;
         hits.clear();
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("status", "stopped");
@@ -158,11 +161,11 @@ public class DebugSession {
 
     // ---------------------------------------------------------------- configure
     public synchronized Map<String, Object> configure(Integer maxDepth, Integer maxStrLen, Integer maxCollSize,
-                                                       Integer maxFields, Boolean safeMode,
+                                                       Integer maxFields, Integer maxRenderNodes, Boolean safeMode,
                                                        Integer exploreBudget, Integer evalBudget,
                                                        Integer stepBudget, Integer modeBTimeoutSec, Boolean allowEval) {
-        List<String> raised = sessionConfig.configure(maxDepth, maxStrLen, maxCollSize, maxFields, safeMode,
-                exploreBudget, evalBudget, stepBudget, modeBTimeoutSec, allowEval);
+        List<String> raised = sessionConfig.configure(maxDepth, maxStrLen, maxCollSize, maxFields, maxRenderNodes,
+                safeMode, exploreBudget, evalBudget, stepBudget, modeBTimeoutSec, allowEval);
         if (!raised.isEmpty()) {
             debugActions++; // 显式破例：抬限高于默认，记一笔
         }
@@ -209,7 +212,28 @@ public class DebugSession {
         }
 
         if ("B".equals(m)) {
-            return doModeB(sr, timeoutSec);
+            // Mode B: NON-BLOCKING. Arm + mark modeB + start the target if suspended, then return.
+            // The AI triggers its request (curl/manual), then calls resume to block until the hit.
+            bpm.markModeB(sr.breakpointId);
+            eventLoop.armModeB();
+            try { vm.resume(); } catch (Throwable ignored) {} // start target if suspended at startup
+            Map<String, Object> res = new LinkedHashMap<>();
+            res.put("mode", "B");
+            res.put("breakpointId", sr.breakpointId);
+            res.put("resolvedClass", sr.resolvedClass);
+            if (sr.method != null) res.put("method", sr.method);
+            if (sr.line != null) res.put("line", sr.line);
+            res.put("captures", captures);
+            res.put("hitCount", 0);
+            res.put("status", sr.deferred ? "armed_deferred" : "armed");
+            res.put("jvmSuspended", false);
+            res.put("note", (sr.deferred
+                    ? "class not loaded yet; armed via a class-prepare watcher. "
+                    : "Breakpoint armed (NON-BLOCKING). ")
+                    + "Trigger your request now (curl/manual), then call resume to block until the hit. "
+                    + "JVM suspends at the hit for inspection (explore/get_variables/step); call resume again to continue.");
+            warnIfHeavy(res);
+            return res;
         }
 
         // Mode A：arm + resume，目标继续运行，断点在后台触发。
@@ -229,44 +253,6 @@ public class DebugSession {
         res.put("note", sr.deferred
                 ? "class not loaded yet; armed via a class-prepare watcher and will fire once the class loads. Non-blocking - poll list_hits."
                 : "non-blocking; hits are captured in the background. Call list_hits to retrieve snapshots.");
-        warnIfHeavy(res);
-        return res;
-    }
-
-    private Map<String, Object> doModeB(BreakpointManager.SetResult sr, Integer timeoutSec) {
-        CountDownLatch latch = eventLoop.prepareModeBWait();
-        exploreUsed = 0;
-        evalUsed = 0;
-        stepUsed = 0;
-        try {
-            vm.resume();
-        } catch (Throwable ignored) {
-        }
-        int timeout = timeoutSec != null && timeoutSec > 0 ? timeoutSec : sessionConfig.modeBTimeoutSec();
-        boolean got;
-        try {
-            got = latch.await(timeout, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return err("mode-B wait interrupted");
-        }
-        Hit hit = eventLoop.claimSuspendedHitOrAbandon();
-        if (hit == null) {
-            Map<String, Object> res = err("mode-B timed out after " + timeout
-                    + "s (breakpoint stays armed; later hits degrade to mode A - call list_hits)");
-            res.put("breakpointId", sr.breakpointId);
-            return res;
-        }
-        Map<String, Object> res = new LinkedHashMap<>();
-        res.put("status", "hit");
-        res.put("mode", "B");
-        res.put("breakpointId", sr.breakpointId);
-        res.put("hit", hit);
-        res.put("jvmSuspended", true);
-        res.put("note", "JVM is suspended. You may call explore/get_frames/get_variables/step (budgeted) or resume to continue.");
-        res.put("exploreBudgetRemaining", Math.max(0, sessionConfig.exploreBudget() - exploreUsed));
-        res.put("evalBudgetRemaining", Math.max(0, sessionConfig.evalBudget() - evalUsed));
-        res.put("stepBudgetRemaining", sessionConfig.stepBudget());
         warnIfHeavy(res);
         return res;
     }
@@ -292,7 +278,24 @@ public class DebugSession {
         }
 
         if ("B".equals(m)) {
-            return doModeB(sr, timeoutSec);
+            // Mode B: NON-BLOCKING. Arm + mark modeB + start target, then return. resume blocks.
+            bpm.markModeB(sr.breakpointId);
+            eventLoop.armModeB();
+            try { vm.resume(); } catch (Throwable ignored) {}
+            Map<String, Object> res = new LinkedHashMap<>();
+            res.put("mode", "B");
+            res.put("breakpointId", sr.breakpointId);
+            res.put("exceptionClass", sr.resolvedClass);
+            res.put("captures", captures);
+            res.put("hitCount", 0);
+            res.put("status", sr.deferred ? "armed_deferred" : "armed");
+            res.put("jvmSuspended", false);
+            res.put("note", (sr.deferred
+                    ? "exception class not loaded yet; armed via a class-prepare watcher. "
+                    : "Exception breakpoint armed (NON-BLOCKING). ")
+                    + "Trigger your request, then call resume to block until the hit. Use 'e' as root in captures.");
+            warnIfHeavy(res);
+            return res;
         }
 
         try { vm.resume(); } catch (Throwable ignored) {}
@@ -315,9 +318,13 @@ public class DebugSession {
         if (id == null || !bpm.remove(id)) {
             return err("no such breakpoint: " + id);
         }
+        // Clear this bp's captured hits so the buffer doesn't accumulate stale data
+        // (keeps session_status hitBufferSize consistent with list_hits count).
+        int cleared = hits.removeForBp(id);
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("status", "removed");
         res.put("breakpointId", id);
+        res.put("clearedHits", cleared);
         return res;
     }
 
@@ -340,12 +347,51 @@ public class DebugSession {
     }
 
     // ---------------------------------------------------------------- hits
-    public synchronized Map<String, Object> listHits(String bpId, Integer from, Integer to) {
+    public synchronized Map<String, Object> listHits(String bpId, Integer from, Integer to,
+                                                     Integer limit, Boolean compact) {
         if (!attached) return err("not attached");
+        int lim = limit != null && limit > 0 ? Math.min(limit, Defaults.LIST_HITS_MAX) : Defaults.LIST_HITS_LIMIT;
         List<Hit> list = hits.query(bpId, from, to);
+        boolean truncated = list.size() > lim;
+        if (truncated) {
+            // keep the most recent lim (query returns oldest-first)
+            list = new ArrayList<>(list.subList(list.size() - lim, list.size()));
+        }
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("count", list.size());
-        res.put("hits", list);
+        res.put("truncated", truncated);
+        if (compact != null && compact) {
+            // Compact: metadata + capture expr/status only (omit ValueNode trees).
+            List<Map<String, Object>> compactHits = new ArrayList<>();
+            for (Hit h : list) {
+                Map<String, Object> ch = new LinkedHashMap<>();
+                ch.put("hitId", h.hitId);
+                ch.put("hitOrdinal", h.hitOrdinal);
+                ch.put("breakpointId", h.breakpointId);
+                ch.put("class", h.className);
+                ch.put("method", h.methodName);
+                ch.put("line", h.line);
+                ch.put("thread", h.threadName);
+                ch.put("mode", h.mode);
+                List<Map<String, Object>> caps = new ArrayList<>();
+                for (CaptureResult cr : h.captures) {
+                    Map<String, Object> c = new LinkedHashMap<>();
+                    c.put("expr", cr.expr);
+                    c.put("status", cr.status);
+                    if (cr.nullBreakAt != null) c.put("nullBreakAt", cr.nullBreakAt);
+                    if (cr.error != null) c.put("error", cr.error);
+                    caps.add(c);
+                }
+                ch.put("captures", caps);
+                compactHits.add(ch);
+            }
+            res.put("hits", compactHits);
+            res.put("compact", true);
+            res.put("note", "compact view (capture values omitted). Re-call list_hits with from_hit/to_hit (no compact) for full values of a specific hit.");
+        } else {
+            res.put("hits", list);
+            res.put("compact", false);
+        }
         return res;
     }
 
@@ -466,8 +512,37 @@ public class DebugSession {
 
     public synchronized Map<String, Object> resume() {
         if (!attached) return err("not attached");
+        // Mode-B wait: set_breakpoint(mode=B) armed a non-blocking wait; block until the hit.
+        if (eventLoop.isModeBPending()) {
+            int timeout = sessionConfig.modeBTimeoutSec();
+            exploreUsed = 0;
+            evalUsed = 0;
+            stepUsed = 0;
+            Hit hit = eventLoop.waitForModeBHit(timeout);
+            if (hit == null) {
+                Map<String, Object> res = new LinkedHashMap<>();
+                res.put("error", "mode-B timed out after " + timeout
+                        + "s (breakpoint stays armed; later hits go to the buffer - call list_hits). "
+                        + "Re-arm with set_breakpoint(mode=B) and call resume to wait again.");
+                return res;
+            }
+            Map<String, Object> res = new LinkedHashMap<>();
+            res.put("status", "hit");
+            res.put("mode", "B");
+            res.put("breakpointId", hit.breakpointId);
+            res.put("hit", hit);
+            res.put("jvmSuspended", true);
+            res.put("note", "JVM is suspended at the hit. Call explore/get_frames/get_variables/step (budgeted), then resume to continue.");
+            res.put("exploreBudgetRemaining", Math.max(0, sessionConfig.exploreBudget() - exploreUsed));
+            res.put("evalBudgetRemaining", Math.max(0, sessionConfig.evalBudget() - evalUsed));
+            res.put("stepBudgetRemaining", sessionConfig.stepBudget());
+            warnIfHeavy(res);
+            return res;
+        }
+        // Continue mode: resume the suspended thread (after inspecting a mode-B hit).
         if (!eventLoop.isSuspended()) {
-            return err("not suspended; nothing to resume");
+            return err("not suspended and no mode-B wait pending. To stop at a breakpoint: "
+                    + "set_breakpoint(mode=B), trigger your request, then call resume to block until the hit.");
         }
         try {
             CompletableFuture<Map<String, Object>> f = new CompletableFuture<>();
@@ -582,6 +657,10 @@ public class DebugSession {
     /** Fuzzy class resolution: confirm the exact class name before set_breakpoint. */
     public synchronized Map<String, Object> resolveClass(String pattern, boolean includeProxies) {
         if (!attached) return err("not attached");
+        if (pattern == null || pattern.isBlank()) {
+            return err("a class pattern is required (param 'pattern'; e.g. UserService). "
+                    + "Note: 'class'/'name' are also accepted as aliases.");
+        }
         List<ClassCandidate> cands = ClassResolver.resolve(vm, pattern, includeProxies);
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("count", cands.size());
@@ -644,6 +723,7 @@ public class DebugSession {
         m.put("maxStrLen", l.toStringLimit);
         m.put("maxCollSize", l.collectionLimit);
         m.put("maxFields", l.maxFields);
+        m.put("maxRenderNodes", l.maxRenderNodes);
         return m;
     }
 

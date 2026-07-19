@@ -19,7 +19,7 @@ counter warns after 8+ debug actions, steering the AI toward logs/tests first.
 npm install -g jdb-mcp
 
 # Or use without installing:
-npx jdb-mcp
+npx -y jdb-mcp
 ```
 
 Set `JAVA_HOME` if your JDK isn't on the PATH:
@@ -34,42 +34,35 @@ set JAVA_HOME=F:\path\to\jdk-17
 
 ## Claude Code Wiring
 
-```json
-{
-  "mcpServers": {
-    "jdb-mcp": {
-      "command": "npx",
-      "args": ["jdb-mcp"]
-    }
-  }
-}
-```
-
-Or if installed globally:
-
-```json
-{
-  "mcpServers": {
-    "jdb-mcp": {
-      "command": "jdb-mcp"
-    }
-  }
-}
-```
-
-If your JDK isn't on the PATH, set it inline:
+**Default Java is JDK 17+** (auto-detected):
 
 ```json
 {
   "mcpServers": {
     "jdb-mcp": {
       "command": "npx",
-      "args": ["jdb-mcp"],
-      "env": { "JAVA_HOME": "/path/to/jdk-17" }
+      "args": ["-y", "jdb-mcp"]
     }
   }
 }
 ```
+
+**Default Java is NOT JDK 17+** (point `JAVA_HOME` at it):
+
+```json
+{
+  "mcpServers": {
+    "jdb-mcp": {
+      "command": "npx",
+      "args": ["-y", "jdb-mcp"],
+      "env": { "JAVA_HOME": "XXX/jdk17" }
+    }
+  }
+}
+```
+
+Or if installed globally (`npm install -g jdb-mcp`), use `"command": "jdb-mcp"` instead
+(add `env` if needed, as above).
 
 ## How It Works
 

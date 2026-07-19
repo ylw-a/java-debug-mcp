@@ -75,7 +75,7 @@ jdb-mcp
 ### Via `npx` (no global install)
 
 ```bash
-npx jdb-mcp
+npx -y jdb-mcp
 ```
 
 ### From source (for development)
@@ -93,20 +93,43 @@ java -jar jdb-mcp/target/jdb-mcp-1.0.0.jar
 
 ## Claude Code Wiring
 
-### With npm (recommended)
+### With npx (auto-install, recommended)
+
+No `npm install` needed — `npx -y` fetches `jdb-mcp` from the registry on first run and caches it.
+
+**Default Java is JDK 17+** (auto-detected by the launcher):
 
 ```json
 {
   "mcpServers": {
     "jdb-mcp": {
       "command": "npx",
-      "args": ["jdb-mcp"]
+      "args": ["-y", "jdb-mcp"]
     }
   }
 }
 ```
 
-Or, after a global install, use the `jdb-mcp` binary directly:
+**Default Java is NOT JDK 17+** — point `JAVA_HOME` at your JDK 17 with the `env` field:
+
+```json
+{
+  "mcpServers": {
+    "jdb-mcp": {
+      "command": "npx",
+      "args": ["-y", "jdb-mcp"],
+      "env": { "JAVA_HOME": "XXX/jdk17" }
+    }
+  }
+}
+```
+
+> Replace `XXX/jdk17` with your actual JDK 17 path. The launcher checks `JAVA_HOME` first
+> (highest priority), then `java` on `PATH`, then common install locations.
+
+### With global install
+
+After `npm install -g jdb-mcp`:
 
 ```json
 {
@@ -118,19 +141,7 @@ Or, after a global install, use the `jdb-mcp` binary directly:
 }
 ```
 
-If your JDK isn't on the PATH, set `JAVA_HOME` inline via the `env` field (the launcher reads it):
-
-```json
-{
-  "mcpServers": {
-    "jdb-mcp": {
-      "command": "npx",
-      "args": ["jdb-mcp"],
-      "env": { "JAVA_HOME": "/path/to/jdk-17" }
-    }
-  }
-}
-```
+If your default Java is not JDK 17, add `"env": { "JAVA_HOME": "XXX/jdk17" }` as above.
 
 ### Direct jar
 
@@ -138,15 +149,15 @@ If your JDK isn't on the PATH, set `JAVA_HOME` inline via the `env` field (the l
 {
   "mcpServers": {
     "jdb-mcp": {
-      "command": "/path/to/jdk-17/bin/java",
-      "args": ["-jar", "/path/to/jdb-mcp-1.0.0.jar"]
+      "command": "XXX/jdk17/bin/java",
+      "args": ["-jar", "XXX/jdb-mcp-1.0.0.jar"]
     }
   }
 }
 ```
 
-No config file, no env vars required (optional `JDB_MCP_LOG` for log level). The AI passes
-target info directly to `start_session`.
+No config file required (optional `JDB_MCP_LOG` for log level). The AI passes target info
+directly to `start_session`.
 
 ## Tool List (17 tools)
 
